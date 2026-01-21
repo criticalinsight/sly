@@ -25,7 +25,7 @@ Sly is a high-performance, single-binary autonomous coding agent written in **Ru
 
 ### 1. Installation
 ```bash
-git clone https://github.com/yourusername/sly.git
+git clone https://github.com/criticalinsight/sly.git
 cd sly
 cargo install --path .
 ```
