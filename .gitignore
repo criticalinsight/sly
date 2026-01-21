@@ -1,0 +1,7 @@
+/target
+.env
+.DS_Store
+/lancedb_data
+
+# Sly Agent Data
+.sly/
