@@ -351,6 +351,13 @@ impl Cortex {
 
         Ok(SemanticLinter::parse_response(&response))
     }
+    pub async fn reflect(&self, context: &str) -> Result<Vec<String>> {
+        let prompt = crate::reflexion::Reflexion::critique_prompt();
+        let full_prompt = format!("{}\n\nCONTEXT TO CRITIQUE:\n{}", prompt, context);
+        
+        let response = self.generate(&full_prompt, ThinkingLevel::Minimal).await?;
+        Ok(crate::reflexion::Reflexion::parse_heuristics(&response))
+    }
 }
 
 fn extract_text(body: &Value) -> Option<String> {

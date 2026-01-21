@@ -61,7 +61,7 @@ async fn handle_impulse(impulse: Impulse, lane: &str, state: &GlobalState) {
             println!("{} [Swarm] Worker {} reported: {}", lane_tag, id, status);
         }
         Impulse::JanitorWakeup => {
-            println!("{} [Janitor] Waking up...", lane_tag);
+            crate::janitor::Janitor::perform_maintenance(state).await;
         }
         Impulse::SystemInterrupt => {
             println!("{}", "🛑 System Interrupt received. Shutting down...".red());

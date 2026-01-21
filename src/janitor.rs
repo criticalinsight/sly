@@ -1,6 +1,15 @@
+use crate::core::state::GlobalState;
+use colored::*;
+
 pub struct Janitor;
 
 impl Janitor {
+    pub async fn perform_maintenance(_state: &GlobalState) {
+        println!("{} [Janitor] Performing maintenance...", "🧹".cyan());
+        // Future: Vacuum DB, summarize conversations, etc.
+        println!("{} [Janitor] Maintenance complete.", "✨".green());
+    }
+
     pub fn extraction_prompt() -> &'static str {
         "You are a Knowledge Graph Extractor.
 Analyze the following conversation and extract key technical facts and user preferences.
@@ -8,7 +17,7 @@ Output STRICTLY a list of \"Semantic Triples\" in this format:
 - (Subject) --[Relation]--> (Object)
 
 Rules:
-1. De-duplicate entities (e.g., use "Sly" instead of "the agent").
+1. De-duplicate entities (e.g., use \"Sly\" instead of \"the agent\").
 2. Capture technical constraints (e.g., `(Project) --uses--> (Tokio)`).
 3. Capture user preferences (e.g., `(User) --dislikes--> (Python Scripts)`).
 4. No introduction or prose. List only."

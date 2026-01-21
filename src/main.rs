@@ -21,6 +21,7 @@ use tokio::time::{sleep, Duration};
 
 pub const SLY_DIR: &str = ".sly";
 
+// Modules are now re-exported from lib.rs (sly crate)
 // mod benchmarker;
 // mod daemon;
 // mod fingerprint;
@@ -64,9 +65,15 @@ async fn main() -> Result<()> {
     // Cortex (Ownership of Arc<Memory>)
     let cortex = Arc::new(Cortex::new(config.clone(), memory.clone())?);
 
-    // 1.1 Autodidact Phase (The Learning)
+    // 1.1 Autodidact Phase & Fingerprinting
     let engine = KnowledgeEngine::new(memory.clone());
     println!("{} Scanning Local Environment for New Knowledge...", "🧠".cyan());
+    
+    // Project Fingerprinting
+    let fp = sly::fingerprint::ProjectFingerprint::detect(Path::new("."));
+    println!("   {} Detected Tech Stack: {}", "🔍".yellow(), fp.tech_stack.join(", "));
+    println!("   {} Project Type: {:?}", "📁".blue(), fp.project_type);
+
     if let Ok(libs) = engine.scan_all_dependencies() {
         if libs.is_empty() {
              println!("   {} No external libraries detected.", "📭".yellow());
@@ -76,34 +83,30 @@ async fn main() -> Result<()> {
                  println!("     - {} ({})", lib.name.bold(), lib.version);
              }
              
-             // Sync libraries to memory to enable update checks
              if let Err(e) = engine.sync_libraries(&libs).await {
                  eprintln!("Failed to sync library metadata: {}", e);
              }
              
-             // Check for library updates
              println!("   {} Checking for upstream updates...", "🌐".blue());
              match engine.check_library_updates().await {
                  Ok(updates) => {
-                     if updates.is_empty() {
-                         println!("     {} All libraries are current.", "✅".green());
+                     let mut found_updates = false;
+                     for (name, local, latest) in &updates {
+                         if local != latest {
+                             println!("     - {} [{} -> {}]", name.bold().yellow(), local, latest);
+                             found_updates = true;
+                         }
+                     }
+                     
+                     if found_updates {
+                         println!("   {} Upgrading manifests...", "📦".cyan());
+                         if let Err(e) = engine.upgrade_manifest(&updates).await {
+                             eprintln!("Upgrade failed: {}", e);
+                         } else {
+                             println!("   {} Upgrade complete. Please rebuild to apply changes.", "✨".green());
+                         }
                      } else {
-                         let mut found_updates = false;
-                         for (name, local, latest) in &updates {
-                             if local != latest {
-                                 println!("     - {} [{} -> {}]", name.bold().yellow(), local, latest);
-                                 found_updates = true;
-                             }
-                         }
-                         
-                         if found_updates {
-                             println!("   {} Upgrading manifests...", "📦".cyan());
-                             if let Err(e) = engine.upgrade_manifest(&updates).await {
-                                 eprintln!("Upgrade failed: {}", e);
-                             } else {
-                                 println!("   {} Upgrade complete. Please rebuild to apply changes.", "✨".green());
-                             }
-                         }
+                         println!("     {} All libraries are current.", "✅".green());
                      }
                  }
                  Err(e) => {
@@ -123,14 +126,33 @@ async fn main() -> Result<()> {
     let (_priority_tx, priority_rx) = mpsc::channel(100);
     let (background_tx, background_rx) = mpsc::channel(1000);
 
-    // 3. Setup File Watcher
-    // Route file events to BACKGROUND channel
+    // 3. Start Background Services
+    
+    // Start API Server (on port 3001)
+    tokio::spawn(async move {
+        if let Err(e) = sly::api_server::start_server(".".to_string(), 3001).await {
+            eprintln!("API Server error: {}", e);
+        }
+    });
+
+    // Start Janitor Background Loop (Wake up every 5 minutes)
+    let janitor_tx = background_tx.clone();
+    tokio::spawn(async move {
+        loop {
+            sleep(Duration::from_secs(300)).await;
+            let _ = janitor_tx.send(sly::io::events::Impulse::JanitorWakeup).await;
+        }
+    });
+
+    // 4. Setup File Watcher
     let _watcher = setup_watcher(Path::new("."), background_tx.clone())?;
     
-    // 4. Start Cortex Loop (Godmode)
+    // 5. Start Cortex Loop (Godmode)
     println!("{}", "🚀 Godmode Activated: Event Bus Online".green().bold());
     println!("{}", "   - Priority Channel: READY".yellow());
     println!("{}", "   - Background Channel: READY".blue());
+    println!("{}", "   - API Server: ONLINE (Port 3001)".magenta());
+    println!("{}", "   - Janitor: ACTIVE".cyan());
     
     cortex_loop(priority_rx, background_rx, state).await;
 
