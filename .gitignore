@@ -1,7 +1,7 @@
 /target
 .env
 .DS_Store
-/lancedb_data
+/cozo_data
 
 # Sly Agent Data
 .sly/

@@ -56,7 +56,7 @@ async fn main() -> Result<()> {
     let config = SlyConfig::default(); 
     
     // Core Memory (Shared)
-    let memory = Arc::new(Memory::new(&format!("{}/lancedb", SLY_DIR)).await.context("Failed to init memory")?);
+    let memory = Arc::new(Memory::new(&format!("{}/cozo", SLY_DIR)).await.context("Failed to init memory")?);
     
     // Legacy Memory Adapter (Ownership of Arc<Memory>)
     let memory_adapter = Arc::new(LegacyMemoryAdapter::new(memory.clone()));
@@ -143,7 +143,7 @@ fn init_workspace() -> Result<()> {
         println!("{}", "✅ Sly is already alive in this workspace.".green());
         return Ok(());
     }
-    fs::create_dir_all(sly_path.join("lancedb"))?;
+    fs::create_dir_all(sly_path.join("cozo"))?;
     fs::create_dir_all(sly_path.join("shadow"))?;
     let config = SlyConfig::default();
     let toml = toml::to_string_pretty(&config)?;
@@ -172,7 +172,7 @@ async fn run_worker_loop() -> Result<()> {
     let config_str = fs::read_to_string(&config_path).unwrap_or_default();
     let config: SlyConfig = toml::from_str(&config_str).unwrap_or_default();
 
-    let memory = Arc::new(Memory::new(&format!("{}/lancedb", SLY_DIR)).await?);
+    let memory = Arc::new(Memory::new(&format!("{}/cozo", SLY_DIR)).await?);
     let cortex = Cortex::new(config, Arc::clone(&memory))?;
 
     let task_path = format!("{}/swarm/{}/task.json", SLY_DIR, worker_id);

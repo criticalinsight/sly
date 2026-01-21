@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let memory = Arc::new(Memory::new(".sly/lancedb").await?);
+    let memory = Arc::new(Memory::new(".sly/cozo").await?);
     let engine = KnowledgeEngine::new(memory);
     
     println!("🔍 Scanning workspace for new ideas...");
