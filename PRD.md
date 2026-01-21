@@ -31,7 +31,7 @@ To build the "vim of agents"—lightweight, incredibly fast, and powerful. It sh
 
 ### 4.3 Memory System
 - **Vector Store**: Embedded CozoDB (Relational-Graph-Vector hybrid, RocksDB storage).
-- **Embeddings**: `candle` (BERT) running locally on CPU/Metal.
+- **Embeddings**: `candle` (**BGE-Small-en-v1.5**) running locally on CPU/Metal.
 - **Background Hygiene**: "Janitor" task to prune stale context and summarize lessons.
 
 ### 4.4 Inputs & Outputs

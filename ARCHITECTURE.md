@@ -61,7 +61,7 @@ graph TD
 
 ### 2. `ActiveMemory` (The Hippocampus)
 - **Role**: Graph-Guided Vector Store (CozoDB).
-- **Implementation**: Metal-accelerated embeddings via `candle`. Neighborhood expansion replaces brute-force RAG.
+- **Implementation**: Metal-accelerated embeddings via `candle` (**BGE**). Neighborhood expansion replaces brute-force RAG.
 
 ### 3. `The Sentinel` (Security Gate)
 - **Role**: Automated Linting & Safety Audits.

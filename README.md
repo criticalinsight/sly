@@ -17,7 +17,7 @@ Sly is a high-performance, single-binary autonomous coding agent written in **Ru
 *   **Rollback Snapshots**: Zero-cost restoration of workspace state via `.sly/snapshots`.
 *   **Semantic Linting**: LLM-guided linting for catching logical API misuse.
 *   **Auto-Didact Engine**: Automatically learns your tech stack by scanning manifests and scraping official documentation.
-*   **Memory**: Active RAG via **CozoDB** and Metal-accelerated embeddings (`candle`).
+*   **Memory**: Active RAG via **CozoDB** and Metal-accelerated embeddings (**BGE**).
 *   **Cortex**: Powered by **Gemini 3.0** with **Thinking Levels** (`High` / `Low`).
 *   **Godmode**: Event-driven QoS + `OverlayFS` safety shield for transactional edits.
 

@@ -26,13 +26,13 @@ pub struct GraphNode {
 /// 1. Semantic caching of LLM responses
 /// 2. Knowledge Graph storage for code symbols and relationships
 /// 3. Document embedding and retrieval (RAG)
-/// 4. Local embedding generation using Candle (BERT)
+/// 4. Local embedding generation using Candle (BGE-Small-en-v1.5)
 pub type LibraryEntry = (String, String, String, String, String, String, Vec<f32>);
 
 pub struct Memory {
     /// CozoDB instance for structured and vector data
     db: DbInstance,
-    /// BERT model for generating embeddings locally
+    /// BGE model for generating embeddings locally
     model: BertModel,
     /// Tokenizer for the BERT model
     tokenizer: Tokenizer,
