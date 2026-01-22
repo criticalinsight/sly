@@ -69,7 +69,6 @@ while maintaining code clarity."#
     }
 
     /// Architecture Purist persona - prioritizes clean design
-    #[allow(dead_code)]
     pub fn architecture_purist() -> Self {
         Self {
             name: "Architecture Purist".to_string(),
@@ -96,7 +95,6 @@ that improve the design without over-engineering."#
     }
 
     /// User Experience Advocate persona - prioritizes usability
-    #[allow(dead_code)]
     pub fn ux_advocate() -> Self {
         Self {
             name: "UX Advocate".to_string(),
@@ -208,7 +206,6 @@ impl Debate {
     }
 
     /// Full architecture review with all perspectives
-    #[allow(dead_code)]
     pub fn full_review() -> Self {
         Self::new()
             .with_persona(Persona::security_auditor())

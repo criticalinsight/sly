@@ -1,6 +1,8 @@
 use tokio::sync::mpsc::Receiver;
 use crate::io::events::Impulse;
 use crate::core::state::GlobalState;
+use crate::core::directives::Directive;
+use crate::core::interpreter::DirectiveInterpreter;
 use std::sync::Arc;
 use colored::*;
 
@@ -12,63 +14,70 @@ pub async fn cortex_loop(
     println!("{}", "🧠 Cortex Event Bus: ONLINE (QoS Enabled)".green().bold());
     
     loop {
-        // "biased" mode ensures priority_rx is polled first.
-        tokio::select! {
+        let impulse = tokio::select! {
             biased;
 
-            Some(impulse) = priority_rx.recv() => {
-                handle_impulse(impulse, "FAST", &state).await;
+            Some(imp) = priority_rx.recv() => Some((imp, "FAST")),
+            Some(imp) = background_rx.recv() => Some((imp, "SLOW")),
+            else => None,
+        };
+
+        if let Some((imp, lane)) = impulse {
+            let directives = route_impulse(imp, lane);
+            let mut should_shutdown = false;
+
+            for directive in directives {
+                if directive.type_name == "shutdown" {
+                    should_shutdown = true;
+                }
+                DirectiveInterpreter::interpret(directive, state.clone()).await;
             }
-            Some(impulse) = background_rx.recv() => {
-                // Background tasks yield if priority tasks are waiting in next tick
-                handle_impulse(impulse, "SLOW", &state).await;
+
+            if should_shutdown {
+                println!("{}", "👋 Graceful shutdown complete.".green());
+                break;
             }
-            else => break, // All channels closed
+        } else {
+            break;
         }
     }
 }
 
-async fn handle_impulse(impulse: Impulse, lane: &str, state: &GlobalState) {
+fn route_impulse(impulse: Impulse, lane: &str) -> Vec<Directive> {
     let lane_tag = if lane == "FAST" { "⚡".yellow() } else { "🐢".blue() };
+    use serde_json::json;
     
-    // Convert to Data-Oriented "Value" where possible (Temporal Decoupling)
     match impulse {
-        Impulse::UserInput(input) => {
-            println!("{} [UserInput] {}", lane_tag, input);
-            let cortex = state.cortex.clone();
-            tokio::spawn(async move {
-                match cortex.generate(&input, crate::core::cortex::ThinkingLevel::High).await {
-                    Ok(response) => {
-                        println!("{}\n{}", "🤖 Sly Response:".green().bold(), response);
-                    }
-                    Err(e) => eprintln!("Cortex error: {}", e),
-                }
-            });
+        Impulse::InitiateSession(input) => {
+            println!("{} [InitiateSession] {}", lane_tag, input);
+            vec![Directive::new("initiate_session", json!({ "input": input }))]
+        }
+        Impulse::ThinkStep(session_id) => {
+            vec![Directive::new("think", json!({ "session_id": session_id }))]
+        }
+        Impulse::Observation(session_id, obs) => {
+            vec![Directive::new("observe", json!({ "session_id": session_id, "observation": obs }))]
         }
         Impulse::FileSystemEvent(event) => {
-            // MOVE KnowledgeEngine work into a background spawn to prevent temporal braiding
-            let memory = state.memory_raw.clone();
-            tokio::spawn(async move {
-                let engine = crate::knowledge::KnowledgeEngine::new(memory);
-                for path in event.paths {
-                    if let Err(e) = engine.ingest_file(&path).await {
-                        eprintln!("Ingestion error for {:?}: {}", path, e);
-                    }
-                }
-            });
+            // Convert notify::Event to a value. For now just paths.
+            let paths: Vec<String> = event.paths.iter().map(|p| p.to_string_lossy().to_string()).collect();
+            vec![Directive::new("fs_batch", json!({ "paths": paths }))]
         }
         Impulse::SwarmSignal(id, status) => {
             println!("{} [Swarm] Worker {} reported: {}", lane_tag, id, status);
+            vec![] // Noop for now
+        }
+        Impulse::BootstrapSkills => {
+            vec![Directive::new("bootstrap_skills", json!({}))]
         }
         Impulse::JanitorWakeup => {
-            crate::janitor::Janitor::perform_maintenance(state).await;
+            vec![Directive::new("maintenance", json!({}))]
         }
         Impulse::SystemInterrupt => {
-            println!("{}", "🛑 System Interrupt received. Shutting down...".red());
-            std::process::exit(0);
+            vec![Directive::new("shutdown", json!({}))]
         }
         Impulse::Error(e) => {
-            eprintln!("{} [Error] {}", lane_tag, e.red());
+            vec![Directive::new("error", json!({ "message": e }))]
         }
     }
 }

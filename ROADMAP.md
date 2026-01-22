@@ -4,7 +4,7 @@
 *   **Core Agent Loop**: Input -> Context -> Prompt -> LLM -> Output.
 *   **Context Cannon**: Recursive file reading with exclusion logic.
 *   **Embedded Memory**: CozoDB (RocksDB) integration with `candle`.
-*   **Direct API**: Clean connection to Gemini 1.5 Pro.
+*   **Direct API**: Clean connection to Gemini 3 Pro.
 
 ## 🚩 v0.2.4: The Supervisor Release (✅ Completed)
 *   **Bimodal Roles**: Switch between Supervisor (Architect) and Executor (Builder).

@@ -8,16 +8,14 @@ Sly is a high-performance, single-binary autonomous coding agent written in **Ru
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org)
 [![Platform](https://img.shields.io/badge/platform-macos-lightgrey.svg)](https://www.apple.com/macos/)
 
-## 🚀 Key Features (v0.2.4)
+## 🚀 Key Features (v0.6.0)
 
-*   **Multi-Agent Swarm**: Spawn parallel "Worker Nanos" to handle independent subsystems concurrently.
+*   **Streamlined Supervisor**: A lightweight, focused agent process dedicated to reasoning and execution (`sly`), stripped of heavy background tasks.
 *   **Self-Evolution**: Dynamic tool generation via compiled `.wasm` plugins for specialized tasks.
 *   **Multimodal Vision**: Screenshot capture passed to LLM for visual UI verification.
-*   **Debate Loops**: Multi-persona LLM sessions to audit complex logic changes.
 *   **Rollback Snapshots**: Zero-cost restoration of workspace state via `.sly/snapshots`.
 *   **Semantic Linting**: LLM-guided linting for catching logical API misuse.
-*   **Auto-Didact Engine**: Automatically learns your tech stack by scanning manifests and scraping official documentation.
-*   **Memory**: Active RAG via **CozoDB** and Metal-accelerated embeddings (**BGE**).
+*   **Memory**: Active RAG via **CozoDB** and Metal-accelerated embeddings (**Candle/BGE**).
 *   **Cortex**: Powered by **Gemini 3.0** with **Thinking Levels** (`High` / `Low`).
 *   **Godmode**: Event-driven QoS + `OverlayFS` safety shield for transactional edits.
 
@@ -59,7 +57,7 @@ Once running, you maintain a conversation with Sly or add tasks to `TASKS.md`.
 project_name = "my-awesome-app"
 autonomous_mode = true          # Set to true for headless operation
 max_autonomous_loops = 50       # Circuit breaker for API spend
-primary_model = "gemini-3-flash-preview"
+primary_model = "gemini-3-flash"
 ```
 
 ### Slash Commands
@@ -75,8 +73,7 @@ Contributions are welcome! Please check the [ROADMAP.md](ROADMAP.md) for current
 ## ⚠️ Safety Notice
 
 Sly can execute shell commands and modify files.
-- The **OverlayFS Safety Shield** ensures all edits are transactional and specualtive.
-- **The Crucible** build-gate prevents corrupted commits in Rust projects.
+- The **OverlayFS Safety Shield** ensures all edits are transactional and speculative.
 - **The Governor** prevents dangerous autonomous actions like `git push --force`.
 - **Always** commit your work before letting an agent modify your codebase.
 

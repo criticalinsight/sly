@@ -1,15 +1,10 @@
 use crate::core::state::SlyConfig;
-use crate::memory_legacy::Memory;
 use crate::debate::{Debate, DebateSynthesis};
 use crate::lint::{LintViolation, SemanticLinter};
 use anyhow::{anyhow, Context, Result};
 use colored::*;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::env;
-use std::sync::Arc;
-use std::path::Path;
-use std::fs;
 
 pub const SYSTEM_PROMPT: &str = r#"You are Sly v2.1, a high-velocity, event-driven cybernetic organism operating in "Godmode." You are not a passive tool; you are a proactive, resident agent optimized for Apple Silicon (M-Series). Your primary directive is "Maximum Intelligence, Minimum Latency."
 
@@ -36,7 +31,7 @@ pub const SYSTEM_PROMPT: &str = r#"You are Sly v2.1, a high-velocity, event-driv
 
 ### 3. Context & Memory
 * **Active RAG:** Assume the `GraphBuilder` has already indexed the workspace. If you need to know "Who calls `Auth::login`?", query the graph edges, don't grep the text.
-* **Knowledge Engine:** If you encounter unknown dependencies, assume the `KnowledgeEngine` has scraped their docs. Request specific library definitions if missing.
+// * **Knowledge Engine:** If you encounter unknown dependencies, assume the functional scanner has scraped their docs. Request specific library definitions if missing.
 
 ## TOOL INTERFACE (JSON-RPC)
 
@@ -69,7 +64,33 @@ You communicate exclusively via structured JSON directives.
 }
 ```
 
-**4. Swarm Delegation (Concurrency)**
+**4. Advanced Logic (Datalog)**
+Use this for structural graph queries. **TABLE: `nodes { id => content, type, path, embedding }`**
+```json
+{
+  "directive": "QueryDatalog",
+  "script": "?[id, type] := *nodes{id, type}, type == 'struct'"
+}
+```
+
+### DATALOG CHEAT SHEET (CozoDB)
+* **Find all of type:** `?[id] := *nodes{id, type}, type == 'fn'`
+* **Find by Path:** `?[id] := *nodes{id, path}, path == 'src/main.rs'`
+* **Compound Query:** `?[id, type] := *nodes{id, type, content}, type == 'fn', content.contains('async')`
+* **Count:** `?[count] := *nodes{id}, count = count(id)`
+
+**5. Native Skills (WASM)**
+Execute pure logic stored in the `skills` table.
+To find skills: `?[n, d, s] := *skills{name: n, description: d, signature: s}`
+```json
+{
+  "directive": "UseSkill",
+  "name": "sly_sum",
+  "args": [10, 20]
+}
+```
+
+**6. Swarm Delegation (Concurrency)**
 ```json
 {
   "directive": "SpawnWorker",
@@ -78,7 +99,7 @@ You communicate exclusively via structured JSON directives.
 }
 ```
 
-**5. Final Commitment**
+**6. Final Commitment**
 ```json
 {
   "directive": "CommitOverlay",
@@ -125,11 +146,13 @@ pub struct Cortex {
     pub api_key: String,
     pub client: reqwest::Client,
     pub config: SlyConfig,
-    pub memory: Arc<Memory>,
+    // pub memory: Arc<Memory>, // Removed: Decomplection
+    pub tech_stack: String,
+    pub tool_defs: String,
 }
 
 impl Cortex {
-    pub fn new(config: SlyConfig, memory: Arc<Memory>) -> Result<Self> {
+    pub fn new(config: SlyConfig, tech_stack: String) -> Result<Self> {
         let api_key = env::var("GEMINI_API_KEY")
             .context("CRITICAL: GEMINI_API_KEY not found in .env or environment")?;
 
@@ -137,19 +160,20 @@ impl Cortex {
             api_key,
             client: reqwest::Client::new(),
             config,
-            memory,
+            // memory,
+            tech_stack,
+            tool_defs: String::new(),
         })
     }
 
+    pub fn set_tool_defs(&mut self, defs: String) {
+        self.tool_defs = defs;
+    }
+
+    // Call this if you want to prime the cache. 
+    // It returns the Cache ID (name). 
+    // Caller is responsible for storing (hash -> cache_id) if needed.
     pub async fn create_context_cache(&self, context: &str) -> Result<String> {
-        let mut hasher = Sha256::new();
-        hasher.update(context.as_bytes());
-        let hash = hex::encode(hasher.finalize());
-
-        if let Ok(Some(cached_id)) = self.memory.get_kv_cache(&hash).await {
-            return Ok(cached_id);
-        }
-
         println!("{}", "🧠 Creating Gemini Context Cache...".cyan());
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/cachedContents?key={}",
@@ -175,7 +199,6 @@ impl Cortex {
             .context("Cache ID not found in response")?
             .to_string();
 
-        let _ = self.memory.set_kv_cache(&hash, &cache_id).await;
         Ok(cache_id)
     }
 
@@ -195,10 +218,12 @@ impl Cortex {
                 });
             }
 
-            // Include SYSTEM_PROMPT in systemInstruction
+            // Include SYSTEM_PROMPT in systemInstruction with Layout Context
+            let dynamic_prompt = format!("{}\n\n## ACTIVE CONTEXT\n* **Tech Stack:** {}\n", SYSTEM_PROMPT, self.tech_stack);
+            
             let payload = json!({
                 "systemInstruction": {
-                    "parts": [{ "text": SYSTEM_PROMPT }]
+                    "parts": [{ "text": dynamic_prompt }]
                 },
                 "contents": [{"parts": [{"text": prompt}]}],
                 "generationConfig": generation_config
@@ -259,13 +284,6 @@ impl Cortex {
             model, self.api_key
         );
 
-        // Simple generation, maybe used for debates/linting. 
-        // We probably WANT the system prompt here too if it's general purpose.
-        // But debate might use its own prompts. 
-        // For safety, I'll NOT include it for generate_sync as it might be used for specific short tasks.
-        // Or I should? The user prompt is "System Prompt", usually for the Main Agent.
-        // sub-agents (Debate personas) usually have their own context.
-        
         let payload = serde_json::json!({
             "contents": [{"parts": [{"text": prompt}]}]
         });
@@ -326,31 +344,23 @@ impl Cortex {
         Ok(Debate::synthesize(&mutrounds))
     }
 
-    pub async fn perform_lint(&self, path: &str) -> Result<Vec<LintViolation>> {
-        println!("{}", format!("\n🕵️  LINTING: {}", path).yellow().bold());
-
-        let code = if Path::new(path).exists() {
-            fs::read_to_string(path).unwrap_or_default()
-        } else {
-            return Err(anyhow::anyhow!("File not found: {}", path));
-        };
+    // Pure Linting: Logic Only, IO/Context via arguments
+    pub async fn perform_lint(&self, code: &str, context: &str) -> Result<Vec<LintViolation>> {
+        // println!("{}", format!("\n🕵️  LINTING...").yellow().bold()); 
+        // Caller handles UI logging with filename
 
         if code.is_empty() {
             return Ok(vec![]);
         }
 
-        let context = match self.memory.get_neighborhood(path).await {
-            Ok(neighbors) => neighbors.join("\n"),
-            Err(_) => String::new(),
-        };
-
-        let prompt = SemanticLinter::lint_prompt(&code, &context);
+        let prompt = SemanticLinter::lint_prompt(code, context);
         let response = self
             .generate_sync(&self.config.primary_model, &prompt)
             .await?;
 
         Ok(SemanticLinter::parse_response(&response))
     }
+
     pub async fn reflect(&self, context: &str) -> Result<Vec<String>> {
         let prompt = crate::reflexion::Reflexion::critique_prompt();
         let full_prompt = format!("{}\n\nCONTEXT TO CRITIQUE:\n{}", prompt, context);

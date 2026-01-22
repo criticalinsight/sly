@@ -9,11 +9,13 @@ use std::path::{Path, PathBuf};
 /// - Commit: Copy overlay contents to base atomically (as much as possible).
 /// - Rollback: Discard overlay.
 pub struct OverlayFS {
-    base_dir: PathBuf,
-    overlay_dir: PathBuf,
+    pub(crate) base_dir: PathBuf,
+    pub(crate) overlay_dir: PathBuf,
 }
 
 impl OverlayFS {
+    pub fn base_dir(&self) -> &Path { &self.base_dir }
+    pub fn overlay_dir(&self) -> &Path { &self.overlay_dir }
     /// Creates a new OverlayFS. 
     /// `base_dir`: The real workspace (e.g., user's project).
     /// `overlay_id`: Unique ID for this transaction (e.g., task ID).
