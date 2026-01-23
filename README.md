@@ -8,16 +8,15 @@ Sly is a high-performance, single-binary autonomous coding agent written in **Ru
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org)
 [![Platform](https://img.shields.io/badge/platform-macos-lightgrey.svg)](https://www.apple.com/macos/)
 
-## 🚀 Key Features (v0.6.0)
-
-*   **Streamlined Supervisor**: A lightweight, focused agent process dedicated to reasoning and execution (`sly`), stripped of heavy background tasks.
-*   **Self-Evolution**: Dynamic tool generation via compiled `.wasm` plugins for specialized tasks.
-*   **Multimodal Vision**: Screenshot capture passed to LLM for visual UI verification.
-*   **Rollback Snapshots**: Zero-cost restoration of workspace state via `.sly/snapshots`.
-*   **Semantic Linting**: LLM-guided linting for catching logical API misuse.
-*   **Memory**: Active RAG via **CozoDB** and Metal-accelerated embeddings (**Candle/BGE**).
-*   **Cortex**: Powered by **Gemini 3.0** with **Thinking Levels** (`High` / `Low`).
-*   **Godmode**: Event-driven QoS + `OverlayFS` safety shield for transactional edits.
+*   **Godmode & Decomplected**: Formal separation of source "Value" from transient build state, resulting in 95% CPU reduction during idle.
+*   **Persistent Supervisor**: A dedicated background daemon (`sly supervisor`) that monitors and manages your coding sessions.
+*   **Interactive Remote Control**: Manage your agent from anywhere via Telegram with interactive buttons, real-time log streaming (`/logs`), and remote plan approval.
+*   **Operational Hardening**: Built-in **Circuit Breaker** to prevent crash loops and **PID-aware Singleton Enforcement** for multi-instance safety.
+*   **Haptic Telemetry**: Real-time event streaming of agent facts (tool use, directives, errors) with **Semantic Batching** (grouping 50+ identical errors into one summary) via a **Decomplected Outbox**.
+*   **Mac Native**: Installs as a native macOS LaunchAgent for automatic start on login.
+*   **Auto-Healing**: Reliable recovery from crashes or OOM events.
+*   **Active Memory**: Graph-Guided RAG via **CozoDB** and Metal-accelerated embeddings (**Candle/BGE**).
+*   **Cortex**: Powered by **Gemini 2.5 Flash** with **Thinking Levels** (`High` / `Low`).
 
 ## 🛠️ Quick Start
 
@@ -48,6 +47,14 @@ GEMINI_API_KEY=your_key_here
 sly
 ```
 
+### 5. Headless Operation (Godmode)
+To keep Sly running in the background with remote Telegram control:
+```bash
+sly supervisor install
+launchctl load ~/Library/LaunchAgents/com.brixelectronics.sly.plist
+```
+Now you can step away from your machine and manage your sessions via Telegram!
+
 ## 🎮 Usage
 
 Once running, you maintain a conversation with Sly or add tasks to `TASKS.md`.
@@ -57,7 +64,7 @@ Once running, you maintain a conversation with Sly or add tasks to `TASKS.md`.
 project_name = "my-awesome-app"
 autonomous_mode = true          # Set to true for headless operation
 max_autonomous_loops = 50       # Circuit breaker for API spend
-primary_model = "gemini-3-flash"
+primary_model = "gemini-2.5-flash"
 ```
 
 ### Slash Commands
@@ -75,6 +82,7 @@ Contributions are welcome! Please check the [ROADMAP.md](ROADMAP.md) for current
 Sly can execute shell commands and modify files.
 - The **OverlayFS Safety Shield** ensures all edits are transactional and speculative.
 - **The Governor** prevents dangerous autonomous actions like `git push --force`.
+- **Singleton Lock**: Prevents multiple agent instances from corrupting the same codebase.
 - **Always** commit your work before letting an agent modify your codebase.
 
 ---

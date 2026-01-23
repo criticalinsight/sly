@@ -11,26 +11,38 @@ pub struct CozoBackend {
 }
 
 impl CozoBackend {
-    pub fn new(path: &str) -> Result<Self> {
+    pub fn new(path: &str, read_only: bool) -> Result<Self> {
         let db_path = Path::new(path).join("cozo.db");
         let db_path_str = db_path.to_str().context("Invalid UTF-8 in database path")?;
         
         let mut retries = 0;
-        let max_retries = 3;
+        let max_retries = 10;
         let db = loop {
-            match DbInstance::new("rocksdb", db_path_str, Default::default()) {
+            let options = if read_only {
+                r#"{"read_only": true}"#
+            } else {
+                "{}"
+            };
+
+            match DbInstance::new("rocksdb", db_path_str, options) {
                 Ok(db) => break db,
-                Err(e) if retries < max_retries && e.to_string().contains("Resource temporarily unavailable") => {
+                Err(e) if !read_only && retries < max_retries && e.to_string().contains("Resource temporarily unavailable") => {
                     retries += 1;
                     eprintln!("⚠️ Database is locked. Retry {}/{}...", retries, max_retries);
-                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    std::thread::sleep(std::time::Duration::from_millis(1000));
+                }
+                Err(e) if read_only && retries < max_retries && e.to_string().contains("Resource temporarily unavailable") => {
+                    retries += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(200));
                 }
                 Err(e) => return Err(anyhow!("Failed to open CozoDB at {}: {}", db_path_str, e)),
             }
         };
 
         let backend = Self { db };
-        backend.initialize_schema()?;
+        if !read_only {
+            backend.initialize_schema()?;
+        }
         Ok(backend)
     }
 

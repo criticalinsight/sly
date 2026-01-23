@@ -58,6 +58,7 @@ hex = "0.4.3"
 
 # File Watching (Daemon Mode)
 notify = "8.2.0"
+fs2 = "0.4.3"
 
 
 

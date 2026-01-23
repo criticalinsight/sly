@@ -23,23 +23,32 @@ pub type LibraryEntry = (String, String, String, String, String, String, Vec<f32
 
 pub struct Memory {
     backend: CozoBackend,
-    engine: EmbeddingEngine,
+    engine: Option<EmbeddingEngine>,
 }
 
 impl Memory {
-    pub async fn new(path: &str) -> Result<Self> {
-        let backend = CozoBackend::new(path)?;
-        let engine = EmbeddingEngine::new()?;
+    pub async fn new(path: &str, read_only: bool) -> Result<Self> {
+        let backend = CozoBackend::new(path, read_only)?;
+        let engine = Some(EmbeddingEngine::new()?);
 
         Ok(Self { backend, engine })
     }
 
+    pub async fn new_light(path: &str, read_only: bool) -> Result<Self> {
+        let backend = CozoBackend::new(path, read_only)?;
+        Ok(Self { backend, engine: None })
+    }
+
     pub fn embed(&self, text: &str) -> Result<Vec<f32>> {
-        self.engine.embed(text)
+        self.engine.as_ref()
+            .ok_or_else(|| anyhow!("Embedding engine not initialized"))?
+            .embed(text)
     }
 
     pub fn batch_embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        self.engine.batch_embed(texts)
+        self.engine.as_ref()
+            .ok_or_else(|| anyhow!("Embedding engine not initialized"))?
+            .batch_embed(texts)
     }
 
     pub fn record_event(&self, op: &str, data: Value) -> Result<()> {

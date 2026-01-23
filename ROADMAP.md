@@ -43,5 +43,11 @@
 *   **Semantic Linting**: LLM-guided linting for catching logical API misuse that standard compilers miss.
 *   **Multimodal Vision**: Screenshot capture passed to LLM for visual UI verification.
 
+## 🚩 v1.3.0: Godmode Hardening (✅ Completed)
+*   **Decomplected Telemetry**: Outbox-based asynchronous event relay to eliminate database lock contention.
+*   **Semantic Telemetry Batching**: Intelligent summarization of high-frequency events to prevent Telegram flooding.
+*   **Lightweight Health Monitoring**: Background polling with minimal IO and zero GPU overhead.
+*   **Process-Level Singleton Guard**: PID-aware locking protocol for robust multi-instance safety.
+
 ---
-*Last Updated: January 20, 2026*
+*Last Updated: January 23, 2026*

@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 
 use serde::{Deserialize, Serialize};
+use colored::Colorize;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "lowercase")]
@@ -29,12 +30,31 @@ pub struct SlyConfig {
     pub role: SlyRole,
     #[serde(default)]
     pub mcp_servers: HashMap<String, McpServerConfig>,
+    pub telegram_chat_id: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct McpServerConfig {
     pub command: String,
     pub args: Vec<String>,
+}
+
+impl SlyConfig {
+    pub fn load() -> Self {
+        let path = std::path::Path::new(".sly/config.toml");
+        if path.exists() {
+            match std::fs::read_to_string(path) {
+                Ok(content) => {
+                    match toml::from_str(&content) {
+                        Ok(config) => return config,
+                        Err(e) => eprintln!("{} Failed to parse config.toml: {}", "⚠️".red(), e),
+                    }
+                }
+                Err(e) => eprintln!("{} Failed to read config.toml: {}", "⚠️".red(), e),
+            }
+        }
+        Self::default()
+    }
 }
 
 impl Default for SlyConfig {
@@ -47,6 +67,7 @@ impl Default for SlyConfig {
             max_autonomous_loops: 50,
             role: SlyRole::Executor,
             mcp_servers: HashMap::new(),
+            telegram_chat_id: None,
         }
     }
 }

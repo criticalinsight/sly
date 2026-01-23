@@ -1,77 +1,63 @@
-# Sly User Manual (v0.6.0)
+# Sly User Manual
 
-Welcome to **Sly**, a high-performance, single-binary autonomous coding agent written in Rust. Sly is designed for Apple Silicon, combining deep relational awareness with haptic telemetry for a state-of-the-art coding experience.
+## 1. Introduction
+Sly is a high-performance autonomous coding agent. It is designed to be "Decomplected"—minimizing technical debt and resource overhead.
 
-## 🚀 Getting Started
-
-### 1. Installation
-Install Sly globally using `cargo`:
-```bash
-git clone https://github.com/criticalinsight/sly.git
-cd sly
-cargo install --path .
-```
-
-### 2. Initialization
-Navigate to any project workspace and run:
-```bash
-sly init
-```
-This creates a `.sly/` directory structure containing your local memory (CozoDB) and configuration.
-
-### 3. API Configuration
-Ensure your `.env` file contains your Gemini API key:
-```bash
-GEMINI_API_KEY=your_key_here
-```
-
----
-
-## 🧠 Core Features
-
-### 1. Hybrid Relational Recall
-Sly uses an AST-based **Code Graph** (powered by `syn`) to understand not just snippets of text, but the relationships between your structs, traits, and functions. 
-- **Auto-Recall**: Before every "Thinking" step, Sly automatically queries its memory for relevant code symbols and documentation.
-- **Graph Expansion**: Vector hits are expanded to their graph neighbors, ensuring full context.
-
-### 2. High Autonomy (Auto-Pilot)
-As of v0.6.0, Sly runs in **High Autonomy** mode by default.
-- **Persistent OODA**: Sly will execute up to 50 loops autonomously to solve complex tasks.
-- **Governor Approval**: The agent "self-approves" verified changes using its internal Safety Governor.
-
-### 3. Haptic Telemetry
-Sly provides real-time progress feedback via macOS system audio.
-- **Thinking**: You will hear "Thinking" when Sly starts a cognition cycle.
-- **Task Complete**: "Task complete" signals when the agent has fulfilled your objective or checked off all items in `TASKS.md`.
-
----
-
-## ⚙️ Configuration (`.sly/config.toml`)
-
-Customize your agent's behavior:
+## 2. Configuration (`.sly/config.toml`)
+Default configuration for maximum performance:
 ```toml
-project_name = "sly-engine"
-autonomous_mode = true          # Enable/Disable autonomous execution
-max_autonomous_loops = 50       # Safety circuit breaker
-primary_model = "gemini-3-flash" # Primary cognition model
+project_name = "my-project"
+autonomous_mode = true
+primary_model = "gemini-2.5-flash"
+thinking_level = "auto"
 ```
 
----
+## 4. Godmode & Remote Management
+Sly can be managed remotely via Telegram. This is ideal for background tasks or checking progress while away from your Mac.
 
-## 🧹 Maintenance (The Janitor)
+### Installation
+```bash
+sly supervisor install
+launchctl load ~/Library/LaunchAgents/com.brixelectronics.sly.plist
+```
 
-Sly features a background **Custodial Loop** that runs every 5 minutes:
-1.  **Registry Auditing**: Checks for documentation drift against upstream authorities (Crates.io).
-2.  **Autonomous Learning**: Re-scans your workspace for tech stack changes or new dependencies.
-3.  **Haptic Sync**: Announces relevant maintenance events.
+### Telegram Commands
+- `/start`: Manually launch the agent.
+- `/stop`: Kill the current agent session.
+- `/status`: Get health metrics and interactive buttons.
+- `/logs`: Stream the last 20 lines of the system log.
+- `/query <datalog>`: Run advanced graph queries directly against the agent's memory.
+- `/help`: Show command reference.
 
----
+### Interactive Dashboard (`/status`)
+The `/status` command now returns an interactive keyboard for one-tap operations:
+- **🔄 Restart**: Stop and immediately restart the agent session.
+- **🛑 Stop**: Kill the current agent process.
+- **📄 Logs**: View recent system logs (same as `/logs`).
+- **🧹 Flush**: Clear `sly_supervisor.log` and `sly_supervisor.err` to reclaim space.
 
-## 🛡️ Safety and Control
+### Remote Plan Approval
+When Sly proposes an implementation plan, you will receive it in Telegram with **[✅ Approve]** and **[❌ Reject]** buttons. Approving a plan signals the agent to begin execution immediately.
 
-- **OverlayFS Shield**: All code modifications are speculative until committed. If a build fails, the overlay is discarded.
-- **The Crucible**: Integrated Rust build-gate that prevents merging invalid code.
-- **Command Lock**: Dangerous commands (e.g., `rm -rf /`, `git push --force`) are blocked by the Safety Governor.
+### Haptic Telemetry & Semantic Batching
+The Supervisor will automatically push **Facts** to Telegram as they happen:
+- ⚙️ **Tool Executions**: Real-time log of what files are being touched.
+- 👁️ **Directives**: The agent's next planned steps.
+- 🚨 **Errors**: Immediate alerts for OOM or runtime panics.
+- 📊 **Batching**: Similar facts (e.g., repeating errors) are condensed into a single "xN" summary to prevent message flooding.
 
----
-*Manual generated on January 21, 2026 for Sly v0.6.0*
+## 5. Operational Hardening
+### Circuit Breaker
+To prevent infinite crash loops, Sly includes an intelligent circuit breaker:
+- If the agent crashes **3 times within 10 minutes**, auto-healing is suspended.
+- You will receive a critical alert in Telegram.
+- To reset, manually run `/start` from Telegram once you have addressed the underlying issue.
+
+### Singleton Enforcement & Lock-Free Telemetry
+Sly is optimized for concurrency:
+- **Supervisor Lock**: PID-aware file locking (`.sly/supervisor.lock`) ensures only one background monitor runs.
+- **Decomplected Outbox**: Fast, filesystem-based event queuing ensures your Telegram notifications work even if the agent is heavily writing to the database.
+
+## 6. Troubleshooting
+- **Database Locked**: Usually caused by multiple instances. Singleton enforcement now minimizes this.
+- **Service Not Starting**: Check `/tmp/sly_supervisor.err` for logs. Use the **Flush** button if logs are too large.

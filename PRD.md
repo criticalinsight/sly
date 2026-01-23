@@ -24,9 +24,9 @@ To build the "vim of agents"—lightweight, incredibly fast, and powerful. It sh
 - **Platform**: Optimized for macOS (Apple Silicon).
 
 ### 4.2 AI & Reasoning
-- **Primary Brain**: **Gemini 3.0 Flash-Preview** (Primary) with **Gemini 2.5 Flash** (Fallback).
+- **Primary Brain**: **Gemini 3.0 / 2.5 Flash** (Dual-mode).
   - Features: **Thinking Levels** (`High`/`Low`/`Auto`) for variable reasoning depth.
-- **Context Window**: Leverage Gemini's large token window for "Context Cannon" mode.
+- **Context Window**: Leverage Gemini's large 1M+ token window for "Context Cannon" mode.
 - **Feedback Loop**: "Reflexion Engine" that critiques plans before execution.
 
 ### 4.3 Memory System
@@ -60,6 +60,8 @@ To build the "vim of agents"—lightweight, incredibly fast, and powerful. It sh
   - **Model**: Uses `gemini-3-flash-preview` with variable thinking.
   - **The Symbol Cannon**: Uses `scan_symbols` to provide high-level architectural context without implementational bloat.
   - **Structured Directives**: Mandates JSON output for clear coordination with executors.
+  - **Interactive Plan Approval**: Users can review and approve implementation plans via Telegram inline keyboards before execution.
+  - **Semantic Task Routing**: Automatically places new tasks into relevant `TASKS.md` sections based on content analysis.
   - **Task Compression**: Automatically archives completed tasks in `TASKS.md` after 5 completions.
 
 ### 5.4 The Auto-Didact Engine (Workspace Awareness)
@@ -101,6 +103,7 @@ To build the "vim of agents"—lightweight, incredibly fast, and powerful. It sh
 - **Startup Time**: < 100ms.
 - **Context Loading**: < 1s for 10MB codebase.
 - **Memory Footprint**: < 100MB (idle).
+- **CPU Idle**: < 10% (after performance decomplection).
 - **Safety**: 0 accidental destructive commands executed in test suite thanks to OverlayFS.
 
 ## 7. Future Considerations (M2 Pro Performance)

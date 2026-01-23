@@ -8,3 +8,4 @@ pub mod directives;
 pub mod interpreter;
 pub mod session;
 pub mod fs;
+pub mod supervisor;

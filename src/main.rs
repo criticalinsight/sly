@@ -36,14 +36,51 @@ async fn main() -> Result<()> {
         println!("sly {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
-    if args.iter().any(|a| a == "--help" || a == "-h") {
+    if args.iter().any(|a| a == "--help" || a == "-h" || a == "help") {
         println!("Sly - Autonomous Agent (v{})", env!("CARGO_PKG_VERSION"));
-        println!("Usage: sly [init | --version | --help]");
+        println!("Usage: sly [init | supervisor | session <query> | --version | --help]");
         return Ok(());
     }
 
     if args.iter().any(|a| a == "init") {
         return init_workspace();
+    }
+
+    if args.iter().any(|a| a == "fact") {
+        if args.len() < 4 {
+            eprintln!("Usage: sly fact <operation> <json_data>");
+            return Ok(());
+        }
+        let op = &args[2];
+        let data: serde_json::Value = serde_json::from_str(&args[3])
+            .context("Invalid JSON data for fact")?;
+        
+        let outbox = Path::new(SLY_DIR).join("outbox");
+        fs::create_dir_all(&outbox)?;
+        
+        // Write as unique file to outbox
+        let id = uuid::Uuid::new_v4();
+        let file_path = outbox.join(format!("{}.json", id));
+        let fact = serde_json::json!({
+            "op": op,
+            "data": data,
+            "ts": chrono::Utc::now().timestamp_millis()
+        });
+        fs::write(file_path, serde_json::to_string(&fact)?)?;
+        
+        println!("{} Fact Queued for Broadcast: {}", "📩".cyan(), op);
+        return Ok(());
+    }
+
+    if args.iter().any(|a| a == "supervisor") {
+        if args.iter().any(|a| a == "install") {
+            return sly::core::supervisor::Supervisor::install_service();
+        }
+        dotenvy::dotenv().ok();
+        let token = env::var("TELEGRAM_BOT_TOKEN")
+            .context("TELEGRAM_BOT_TOKEN not found in .env")?;
+        let supervisor = sly::core::supervisor::Supervisor::new(token);
+        return supervisor.run().await;
     }
 
     let mut initial_impulse = None;
@@ -52,20 +89,12 @@ async fn main() -> Result<()> {
     }
 
 
-
-    // 1. Initialize State
-    let config = SlyConfig::default(); 
-    
-    // Core Memory (Shared)
-    let memory = Arc::new(Memory::new(&format!("{}/cozo", SLY_DIR)).await.context("Failed to init memory")?);
-    
-    // Cast to Trait Object
+    // 1. Initialize State and Memory (Only for Agent execution)
+    let config = SlyConfig::load(); 
+    let memory = Arc::new(Memory::new(&format!("{}/cozo", SLY_DIR), false).await.context("Failed to init memory")?);
+    let memory_raw = memory.clone();
     let memory_store: Arc<dyn MemoryStore> = memory.clone();
-    
-    // 1.1 Autodidact Phase & Fingerprinting
-    // 1.1 Autodidact Phase & Fingerprinting
-    // let engine = KnowledgeEngine::new(memory.clone()); // DECOMPLECTED
-    
+
     println!("{} Scanning Local Environment for New Knowledge...", "🧠".cyan());
     
     // Bootstrap Skills (Critical since sly-learn is disabled)
@@ -96,7 +125,7 @@ async fn main() -> Result<()> {
     let overlay = Arc::new(OverlayFS::new(&std::env::current_dir()?, "godmode_session")?);
     println!("{} Safety Shield (OverlayFS) Active", "🛡️".green());
 
-    let state = Arc::new(GlobalState::new(config.clone(), memory_store, memory.clone(), overlay, cortex));
+    let state = Arc::new(GlobalState::new(config.clone(), memory_store, memory_raw.clone(), overlay, cortex));
 
     // Phase 6: Register Core Handlers (Dynamic Dispatch)
     sly::core::interpreter::DirectiveInterpreter::register_core_handlers(state.clone()).await;
@@ -138,6 +167,7 @@ async fn main() -> Result<()> {
     let _watcher = setup_watcher(Path::new("."), background_tx.clone())?;
     
     // 5. Start Cortex Loop (Godmode)
+
     println!("{}", "🚀 Godmode Activated: Event Bus Online".green().bold());
     println!("{}", "   - Priority Channel: READY".yellow());
     println!("{}", "   - Background Channel: READY".blue());

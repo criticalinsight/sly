@@ -35,6 +35,7 @@ impl DirectiveInterpreter {
         bus.register("ingest_file", IngestFileHandler).await;
         bus.register("fs_batch", FsBatchHandler).await;
         bus.register("bootstrap_skills", BootstrapSkillsHandler).await;
+        bus.register("propose_plan", ProposePlanHandler).await;
         bus.register("shutdown", ShutdownHandler).await;
     }
 }
@@ -142,6 +143,15 @@ impl DirectiveHandler for BootstrapSkillsHandler {
     async fn handle(&self, _data: Value, state: Arc<GlobalState>) -> Result<()> {
         crate::knowledge::ensure_skills_loaded(&state.memory_raw).await?;
         println!("{} Skills DB Loaded (Data-Driven Bus)", "📦".purple());
+        Ok(())
+    }
+}
+
+struct ProposePlanHandler;
+#[async_trait]
+impl DirectiveHandler for ProposePlanHandler {
+    async fn handle(&self, _data: Value, _state: Arc<GlobalState>) -> Result<()> {
+        println!("{} Plan Proposed to Godmode (Awaiting Remote Review)", "📝".blue());
         Ok(())
     }
 }
