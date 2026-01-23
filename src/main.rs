@@ -216,6 +216,19 @@ fn init_workspace() -> Result<()> {
         fs::write(".gitignore", gitignore)?;
     }
     println!("{}", "🧬 DNA REPLICATION COMPLETE.".green().bold());
+    
+    let env_path = Path::new(".env");
+    if !env_path.exists() {
+        let env_template = "# Sly Environment Configuration\n\n# 1. AI Cortex (Required)\nGEMINI_API_KEY=your_gemini_api_key_here\n\n# 2. Remote Control (Optional)\nTELEGRAM_BOT_TOKEN=your_telegram_bot_token_here\n# TELEGRAM_CHAT_ID=auto_detected_on_first_message\n";
+        fs::write(env_path, env_template)?;
+        println!("{} Created .env template. Please add your GEMINI_API_KEY.", "📝".yellow());
+    }
+
+    println!("\n{} Next steps:", "🚀".blue());
+    println!("  1. Edit .env and set your API keys.");
+    println!("  2. Run 'sly supervisor install' to enable remote control.");
+    println!("  3. Run 'sly' to start the agent.");
+    
     Ok(())
 }
 

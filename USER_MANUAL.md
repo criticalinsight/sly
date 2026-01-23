@@ -15,11 +15,14 @@ thinking_level = "auto"
 ## 4. Godmode & Remote Management
 Sly can be managed remotely via Telegram. This is ideal for background tasks or checking progress while away from your Mac.
 
-### Installation
-```bash
-sly supervisor install
-launchctl load ~/Library/LaunchAgents/com.brixelectronics.sly.plist
-```
+### Telegram Bot Setup
+1.  **Create Bot**: Message [@BotFather](https://t.me/botfather) and use `/newbot`.
+2.  **Get Token**: Copy the token provided (e.g., `123456:ABC-DEF`).
+3.  **Config**: Add it to your `.env` in the project root:
+    ```bash
+    TELEGRAM_BOT_TOKEN="123456:ABC-DEF"
+    ```
+4.  **Detect ID**: Send any message to your bot. Sly will automatically detect your Chat ID and save it to `.sly/config.toml` for persistence.
 
 ### Telegram Commands
 - `/start`: Manually launch the agent.

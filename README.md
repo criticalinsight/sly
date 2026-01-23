@@ -55,6 +55,13 @@ launchctl load ~/Library/LaunchAgents/com.brixelectronics.sly.plist
 ```
 Now you can step away from your machine and manage your sessions via Telegram!
 
+### 6. Telegram Bot Setup
+To enable remote control:
+1.  Message [@BotFather](https://t.me/botfather) on Telegram.
+2.  Run `/newbot` and follow the instructions to get your **Bot Token**.
+3.  Add the token to your `.env`: `TELEGRAM_BOT_TOKEN=your_token_here`.
+4.  Message your new bot to auto-detect your `Chat ID`.
+
 ## 🎮 Usage
 
 Once running, you maintain a conversation with Sly or add tasks to `TASKS.md`.
