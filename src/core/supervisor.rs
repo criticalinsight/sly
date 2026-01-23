@@ -6,7 +6,7 @@ use tokio::sync::Mutex;
 use crate::memory::Memory;
 use colored::*;
 use crate::io::telegram::TelegramClient;
-use crate::io::telegram::escape_markdown_v2;
+use crate::io::telegram::html_escape;
 
 pub struct Supervisor {
     telegram: Arc<Mutex<TelegramClient>>,
@@ -116,7 +116,7 @@ impl Supervisor {
                 }
             }
             "/help" => {
-                let help = "🤖 *Sly Supervisor Commands*:\n\n/start \\- Launch Sly Agent\n/stop \\- Shutdown Sly Agent\n/status \\- Check Health & Activity\n/logs \\- View Recent Errors\n/query \\- Execute Datalog script";
+                let help = "🤖 <b>Sly Supervisor Commands</b>:\n\n/start - Launch Sly Agent\n/stop - Shutdown Sly Agent\n/status - Check Health & Activity\n/logs - View Recent Errors\n/query - Execute Datalog script";
                 let _ = self.notify(help).await;
             }
             _ => {}
@@ -197,7 +197,7 @@ impl Supervisor {
         }
 
         std::fs::write(tasks_path, content)?;
-        let _ = self.notify(&format!("✅ *Task Queued*: `{}`", escape_markdown_v2(text))).await;
+        let _ = self.notify(&format!("✅ <b>Task Queued</b>: <code>{}</code>", html_escape(text))).await;
         Ok(())
     }
 
@@ -217,7 +217,7 @@ impl Supervisor {
             .context("Failed to spawn sly executor")?;
 
         *child_lock = Some(child);
-        let _ = self.notify("✅ *Sly Executor Launched* (Godmode Active)").await;
+        let _ = self.notify("✅ <b>Sly Executor Launched</b> (Godmode Active)").await;
         Ok(())
     }
 
@@ -226,18 +226,18 @@ impl Supervisor {
         if let Some(mut child) = child_lock.take() {
             println!("🛑 Stopping Sly Executor...");
             let _ = child.kill().await;
-            let _ = self.notify("🛑 *Sly Executor Stopped*").await;
+            let _ = self.notify("🛑 <b>Sly Executor Stopped</b>").await;
         } else {
-            let _ = self.notify("⚠️ *Sly is not running*").await;
+            let _ = self.notify("⚠️ <b>Sly is not running</b>").await;
         }
         Ok(())
     }
 
     async fn report_status(&self) -> Result<()> {
         let child_lock = self.executor.lock().await;
-        let status = if child_lock.is_some() { "🟢 *RUNNING*" } else { "🔴 *STOPPED*" };
-        let heal_status = if self.auto_heal { "🛡️ *ON*" } else { "⚠️ *OFF*" };
-        let msg = format!("📊 *Status*: {}\nAuto-Healing: {}\nMode: Godmode\nSafety: OverlayFS Active", status, heal_status);
+        let status = if child_lock.is_some() { "🟢 <b>RUNNING</b>" } else { "🔴 <b>STOPPED</b>" };
+        let heal_status = if self.auto_heal { "🛡️ <b>ON</b>" } else { "⚠️ <b>OFF</b>" };
+        let msg = format!("📊 <b>Status</b>: {}\nAuto-Healing: {}\nMode: Godmode\nSafety: OverlayFS Active", status, heal_status);
         
         use crate::io::telegram::{InlineKeyboardMarkup, InlineKeyboardButton};
         let keyboard = InlineKeyboardMarkup {
@@ -259,7 +259,7 @@ impl Supervisor {
     async fn send_logs(&self) -> Result<()> {
         let log = std::fs::read_to_string("/tmp/sly_supervisor.err").unwrap_or_default();
         let truncated = if log.len() > 3000 { format!("{}...", &log[log.len()-3000..]) } else { log };
-        let msg = format!("📜 *Recent Logs*:\n\n```\n{}\n```", escape_markdown_v2(&truncated));
+        let msg = format!("📜 <b>Recent Logs</b>:\n\n<pre>{}</pre>", html_escape(&truncated));
         let _ = self.notify(&msg).await;
         Ok(())
     }
@@ -270,11 +270,11 @@ impl Supervisor {
             Ok(res) => {
                 let json = serde_json::to_string_pretty(&res)?;
                 let truncated = if json.len() > 3000 { format!("{}...", &json[..3000]) } else { json };
-                let msg = format!("💾 *Query Result*:\n\n```json\n{}\n```", escape_markdown_v2(&truncated));
+                let msg = format!("💾 <b>Query Result</b>:\n\n<pre>{}</pre>", html_escape(&truncated));
                 let _ = self.notify(&msg).await;
             }
             Err(e) => {
-                let _ = self.notify(&format!("❌ *Datalog Error*: `{}`", escape_markdown_v2(&e.to_string()))).await;
+                let _ = self.notify(&format!("❌ <b>Datalog Error</b>: <code>{}</code>", html_escape(&e.to_string()))).await;
             }
         }
         Ok(())
@@ -286,12 +286,12 @@ impl Supervisor {
             match child.try_wait() {
                 Ok(None) => {} // Still running
                 Ok(Some(status)) => {
-                    let msg = format!("🚨 *Sly Executor Exit* (Status: {})", status);
+                    let msg = format!("🚨 <b>Sly Executor Exit</b> (Status: {})", status);
                     let _ = self.notify(&msg).await;
                     *child_lock = None;
                     
                     if self.auto_heal {
-                        let _ = self.notify("🛡️ *Auto-Healing*: Restarting in 5s...").await;
+                        let _ = self.notify("🛡️ <b>Auto-Healing</b>: Restarting in 5s...").await;
                         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                         // Use a detached start to avoid blocking the monitor
                         println!("🛡️ Auto-healing restart triggered.");
@@ -417,12 +417,12 @@ impl Supervisor {
     }
 
     async fn broadcast_fact(&self, op: &str, data: &serde_json::Value, count: usize) -> Result<()> {
-        let prefix = if count > 1 { format!("*{}x*: ", count) } else { "".to_string() };
+        let prefix = if count > 1 { format!("<b>{}x</b>: ", count) } else { "".to_string() };
 
         if op == "EXEC:propose_plan" {
             let plan_data = data.as_str().unwrap_or("Empty Plan");
             let truncated = if plan_data.len() > 3000 { format!("{}...", &plan_data[..3000]) } else { plan_data.to_string() };
-            let msg = format!("📝 *New Implementation Plan*\n\n{}", escape_markdown_v2(&truncated));
+            let msg = format!("📝 <b>New Implementation Plan</b>\n\n{}", html_escape(&truncated));
             
             use crate::io::telegram::{InlineKeyboardMarkup, InlineKeyboardButton};
             let keyboard = InlineKeyboardMarkup {
@@ -436,10 +436,10 @@ impl Supervisor {
             let _ = self.telegram.lock().await.send_message_with_markup(&msg, keyboard).await;
         } else if op == "ARTIFACT:task" {
             let summary = data["summary"].as_str().unwrap_or("Task list updated.");
-            let msg = format!("📋 {}*Task Update*: {}\n\n_Check TASKS.md for details._", prefix, escape_markdown_v2(summary));
+            let msg = format!("📋 {}<b>Task Update</b>: {}\n\n<i>Check TASKS.md for details.</i>", prefix, html_escape(summary));
             let _ = self.notify(&msg).await;
         } else if op == "ARTIFACT:walkthrough" {
-            let msg = format!("🚀 {}*Phase Complete*: Walkthrough available.\n\n_Review walkthrough.md for the full audit._", prefix);
+            let msg = format!("🚀 {}<b>Phase Complete</b>: Walkthrough available.\n\n<i>Review walkthrough.md for the full audit.</i>", prefix);
             let _ = self.notify(&msg).await;
         } else if op.starts_with("EXEC:") || op.contains("ERROR") || op == "DIRECTIVE" || op.starts_with("ARTIFACT") || op == "PING" {
             let icon = if op.contains("ERROR") { "🚨" } 
@@ -451,16 +451,23 @@ impl Supervisor {
             let data_str = if data.is_null() || data.as_object().map(|o| o.is_empty()).unwrap_or(false) { 
                 "".to_string() 
             } else { 
-                format!("\n```json\n{}\n```", serde_json::to_string(&data).unwrap_or_default()) 
+                format!("\n<pre>{}</pre>", html_escape(&serde_json::to_string(&data).unwrap_or_default())) 
             };
-            let msg = format!("{}{} *Fact*: `{}`{}", icon, prefix, escape_markdown_v2(&clean_op), escape_markdown_v2(&data_str));
+            
+            let msg = format!("{}{} <b>Fact</b>: <code>{}</code>{}", icon, prefix, html_escape(&clean_op), data_str);
             let _ = self.notify(&msg).await;
         }
         Ok(())
     }
 
     async fn notify(&self, text: &str) -> Result<()> {
-        self.telegram.lock().await.send_message(text).await
+        match self.telegram.lock().await.send_message(text).await {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                eprintln!("⚠️ Telegram Notification Failed: {}", e);
+                Err(e)
+            }
+        }
     }
 
     pub fn install_service() -> Result<()> {

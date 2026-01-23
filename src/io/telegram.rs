@@ -71,7 +71,7 @@ impl TelegramClient {
         let payload = json!({
             "chat_id": chat_id,
             "text": text,
-            "parse_mode": "MarkdownV2"
+            "parse_mode": "HTML"
         });
 
         let res = self.client.post(&url).json(&payload).send().await?;
@@ -90,7 +90,7 @@ impl TelegramClient {
         let payload = json!({
             "chat_id": chat_id,
             "text": text,
-            "parse_mode": "MarkdownV2",
+            "parse_mode": "HTML",
             "reply_markup": markup
         });
 
@@ -122,7 +122,7 @@ impl TelegramClient {
         let url = format!("https://api.telegram.org/bot{}/getUpdates", self.token);
         let payload = json!({
             "offset": offset,
-            "timeout": 30
+            "timeout": 5
         });
 
         let res = self.client.post(&url).json(&payload).send().await?;
@@ -141,15 +141,8 @@ impl TelegramClient {
     }
 }
 
-pub fn escape_markdown_v2(text: &str) -> String {
-    // Basic MarkdownV2 escaping for Telegram
-    let escape_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
-    let mut escaped = String::with_capacity(text.len());
-    for c in text.chars() {
-        if escape_chars.contains(&c) {
-            escaped.push('\\');
-        }
-        escaped.push(c);
-    }
-    escaped
+pub fn html_escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
