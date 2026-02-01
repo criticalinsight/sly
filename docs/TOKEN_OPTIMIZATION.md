@@ -268,21 +268,39 @@ let display_text = if full_response.len() > 3800 {
 
 ---
 
-### 8. **Symbolic-First Context** (Future Enhancement)
+### 8. **Symbolic-First Context** (`src/knowledge/compressor.rs`)
 
-Sly's system prompt encourages **symbolic compression**:
+The `SymbolicCompressor` extracts only structural signatures, reducing file sizes by 70-95% while preserving semantic meaning.
 
+#### Supported Languages (31 Total)
+
+| Category | Languages |
+|----------|-----------|
+| **Systems** | Rust, Go, Zig, C, C++ |
+| **JVM** | Java, Kotlin, Scala |
+| **Web** | TypeScript/TSX, JavaScript/JSX, Vue, Svelte, Astro |
+| **Scripting** | Python, Ruby, PHP, Lua, Bash/Zsh |
+| **Functional** | Elixir, Gleam, Clojure |
+| **Apple** | Swift |
+| **Data/Config** | SQL, GraphQL, Terraform/HCL, JSON, YAML, TOML |
+| **Styling** | CSS, SCSS, SASS, LESS |
+| **Docs** | Markdown/MDX |
+| **Container** | Dockerfile |
+
+#### How It Works
+
+```rust
+// Compress 200-line file to ~20 lines of signatures
+let symbolic = SymbolicCompressor::compress(file_content, "rs");
+
+// Output: structs, traits, impl blocks, function signatures only
+// "pub struct AuthService { db, jwt }"
+// "impl AuthService { fn login(email, password) -> Result<Token> }"
 ```
-* **Symbolic First:** Do not request full file contents unless necessary. 
-  Rely on `SymbolicCompressor` output (structs/traits/signatures) to 
-  understand the codebase structure.
-```
 
-#### Planned Implementation
+#### Impact
 
-Instead of sending full file contents:
-
-**Traditional Approach** (5000 tokens):
+**Before Compression** (5000 tokens):
 
 ```rust
 // Full file: src/auth.rs (200 lines)
@@ -293,7 +311,7 @@ pub struct AuthService {
 }
 ```
 
-**Symbolic Approach** (200 tokens):
+**After Compression** (200 tokens):
 
 ```rust
 // Symbolic: src/auth.rs
