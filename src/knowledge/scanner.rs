@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::fs;
 use sha2::{Sha256, Digest};
-use anyhow::Result;
+use crate::error::Result;
 
 pub struct FileValue {
     pub path: PathBuf,
@@ -41,5 +41,39 @@ impl Scanner {
             hash,
             extension,
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn test_scan_file_valid() -> Result<()> {
+        let temp_dir = std::env::temp_dir().join("sly_scan_test");
+        if temp_dir.exists() { fs::remove_dir_all(&temp_dir)?; }
+        fs::create_dir_all(&temp_dir)?;
+        let file_path = temp_dir.join("test.rs");
+        fs::write(&file_path, "fn main() {}")?;
+        
+        let val = Scanner::scan_file(&file_path)?.unwrap();
+        assert_eq!(val.extension, "rs");
+        assert_eq!(val.content, "fn main() {}");
+        assert!(!val.hash.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_scan_file_invalid_ext() -> Result<()> {
+        let temp_dir = std::env::temp_dir().join("sly_scan_test_ext");
+        if temp_dir.exists() { fs::remove_dir_all(&temp_dir)?; }
+        fs::create_dir_all(&temp_dir)?;
+        let file_path = temp_dir.join("test.bin");
+        fs::write(&file_path, vec![0, 1, 2])?;
+        
+        let val = Scanner::scan_file(&file_path)?;
+        assert!(val.is_none());
+        Ok(())
     }
 }

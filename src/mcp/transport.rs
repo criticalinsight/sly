@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use crate::error::{Result, SlyError};
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
@@ -31,10 +31,10 @@ impl StdioTransport {
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
-            .with_context(|| format!("Failed to spawn MCP server: {} {:?}", command, args))?;
+            .map_err(|e| SlyError::Mcp(format!("Failed to spawn MCP server {}: {}", command, e)))?;
 
-        let stdin = child.stdin.take().context("Failed to open stdin")?;
-        let stdout = child.stdout.take().context("Failed to open stdout")?;
+        let stdin = child.stdin.take().ok_or_else(|| SlyError::Mcp("Failed to open stdin".to_string()))?;
+        let stdout = child.stdout.take().ok_or_else(|| SlyError::Mcp("Failed to open stdout".to_string()))?;
         let reader = BufReader::new(stdout);
 
         Ok(Self {
@@ -48,19 +48,19 @@ impl StdioTransport {
 #[async_trait::async_trait]
 impl Transport for StdioTransport {
     async fn send(&self, message: &JsonRpcRequest) -> Result<()> {
-        let mut json = serde_json::to_string(message)?;
+        let mut json = serde_json::to_string(message).map_err(|e| SlyError::Mcp(e.to_string()))?;
         json.push('\n');
         
         let mut stdin = self.stdin.lock().await;
-        stdin.write_all(json.as_bytes()).await?;
-        stdin.flush().await?;
+        stdin.write_all(json.as_bytes()).await.map_err(|e| SlyError::Io(e))?;
+        stdin.flush().await.map_err(|e| SlyError::Io(e))?;
         Ok(())
     }
 
     async fn receive_line(&self) -> Result<Option<String>> {
         let mut reader = self.reader.lock().await;
         let mut line = String::new();
-        if reader.read_line(&mut line).await? == 0 {
+        if reader.read_line(&mut line).await.map_err(|e| SlyError::Io(e))? == 0 {
             return Ok(None);
         }
         Ok(Some(line))

@@ -2,3 +2,8 @@ pub mod types;
 pub mod transport;
 pub mod client;
 pub mod registry;
+pub mod local;
+pub mod browser;
+pub mod cloud;
+pub mod fetch;
+pub mod discovery;

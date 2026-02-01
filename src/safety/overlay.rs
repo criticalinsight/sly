@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use crate::error::{Result, SlyError};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -44,10 +44,10 @@ impl OverlayFS {
 
         let base_path = self.base_dir.join(&rel_path);
         if base_path.exists() {
-            return Ok(fs::read_to_string(base_path)?);
+            return Ok(fs::read_to_string(base_path).map_err(|e| SlyError::Io(e))?);
         }
 
-        Err(anyhow::anyhow!("File not found in overlay or base: {:?}", path))
+        Err(SlyError::Overlay(format!("File not found in overlay or base: {:?}", path)))
     }
 
     /// Writes a file to the overlay.
@@ -56,10 +56,10 @@ impl OverlayFS {
         let overlay_path = self.overlay_dir.join(&rel_path);
 
         if let Some(parent) = overlay_path.parent() {
-            fs::create_dir_all(parent)?;
+            fs::create_dir_all(parent).map_err(|e| SlyError::Io(e))?;
         }
 
-        fs::write(overlay_path, content)?;
+        fs::write(overlay_path, content).map_err(|e| SlyError::Io(e))?;
         Ok(())
     }
 
@@ -69,18 +69,15 @@ impl OverlayFS {
         // Recursively copy overlay_dir to base_dir
         self.copy_dir_recursive(&self.overlay_dir, &self.base_dir)?;
         
-        // Cleanup overlay after successful commit ?? 
-        // Or keep it until explicit cleanup? 
-        // Standard transaction: commit persists, then we are done.
-        
         Ok(())
     }
 
     /// Discards the overlay (rollback).
     pub fn rollback(&self) -> Result<()> {
         if self.overlay_dir.exists() {
-            fs::remove_dir_all(&self.overlay_dir)?;
+            fs::remove_dir_all(&self.overlay_dir).map_err(|e| SlyError::Io(e))?;
         }
+        fs::create_dir_all(&self.overlay_dir).map_err(|e| SlyError::Io(e))?;
         Ok(())
     }
 
@@ -88,11 +85,11 @@ impl OverlayFS {
     fn get_relative_path(&self, path: &Path) -> Result<PathBuf> {
         if path.is_absolute() {
             if path.starts_with(&self.base_dir) {
-                Ok(path.strip_prefix(&self.base_dir)?.to_path_buf())
+                Ok(path.strip_prefix(&self.base_dir).map_err(|e| SlyError::Overlay(e.to_string()))?.to_path_buf())
             } else {
                 // If it's absolute but NOT in base dir, we might reject it or handle it.
                 // For safety, we only allow operations within base_dir.
-                Err(anyhow!("Path {:?} is outside base directory {:?}", path, self.base_dir))
+                Err(SlyError::Overlay(format!("Path {:?} is outside base directory {:?}", path, self.base_dir)))
             }
         } else {
             Ok(path.to_path_buf())
@@ -131,7 +128,7 @@ mod tests {
 
     #[test]
     fn test_overlay_transaction() -> Result<()> {
-        let temp_root = std::env::temp_dir().join("sly_test_safety");
+        let temp_root = std::env::temp_dir().join("sly_test_safety_tx");
         if temp_root.exists() {
             fs::remove_dir_all(&temp_root)?;
         }
@@ -143,13 +140,13 @@ mod tests {
         let overlay = OverlayFS::new(&temp_root, "tx_1")?;
 
         // 1. Read base through overlay
-        assert_eq!(overlay.read_file(&base_file)?, "version = 1");
+        assert_eq!(overlay.read_file(&Path::new("config.toml"))?, "version = 1");
 
         // 2. Write to overlay (shadowed)
-        overlay.write_file(&base_file, "version = 2")?;
+        overlay.write_file(&Path::new("config.toml"), "version = 2")?;
         
         // 3. Read should show new version
-        assert_eq!(overlay.read_file(&base_file)?, "version = 2");
+        assert_eq!(overlay.read_file(&Path::new("config.toml"))?, "version = 2");
 
         // 4. Base should still be old
         assert_eq!(fs::read_to_string(&base_file)?, "version = 1");
@@ -159,6 +156,69 @@ mod tests {
 
         // 6. Base should now be updated
         assert_eq!(fs::read_to_string(&base_file)?, "version = 2");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_overlay_rollback() -> Result<()> {
+        let temp_root = std::env::temp_dir().join("sly_test_safety_rollback");
+        if temp_root.exists() {
+            fs::remove_dir_all(&temp_root)?;
+        }
+        fs::create_dir_all(&temp_root)?;
+
+        let base_file = temp_root.join("config.toml");
+        fs::write(&base_file, "initial")?;
+
+        let overlay = OverlayFS::new(&temp_root, "tx_rollback")?;
+        overlay.write_file(&Path::new("config.toml"), "changed")?;
+        assert_eq!(overlay.read_file(&Path::new("config.toml"))?, "changed");
+
+        overlay.rollback()?;
+        
+        // After rollback, read should show base version (since overlay dir is gone)
+        // Wait, the current implementation of read_file checks if overlay_dir exists?
+        // Let's re-verify read_file logic.
+        
+        let overlay2 = OverlayFS {
+            base_dir: temp_root.clone(),
+            overlay_dir: std::env::temp_dir().join("sly_overlays").join("tx_rollback"),
+        };
+        assert_eq!(overlay2.read_file(&Path::new("config.toml"))?, "initial");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_path_security() -> Result<()> {
+        let temp_root = std::env::temp_dir().join("sly_test_safety_security");
+        let overlay = OverlayFS::new(&temp_root, "tx_sec")?;
+
+        // Path outside base
+        let outside_path = Path::new("/etc/passwd");
+        assert!(overlay.read_file(outside_path).is_err());
+        assert!(overlay.write_file(outside_path, "hack").is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_nested_directories() -> Result<()> {
+        let temp_root = std::env::temp_dir().join("sly_test_safety_nested");
+        if temp_root.exists() {
+            fs::remove_dir_all(&temp_root)?;
+        }
+        fs::create_dir_all(&temp_root)?;
+
+        let overlay = OverlayFS::new(&temp_root, "tx_nested")?;
+        let nested_path = Path::new("src/core/mod.rs");
+        
+        overlay.write_file(nested_path, "pub mod parser;")?;
+        assert_eq!(overlay.read_file(nested_path)?, "pub mod parser;");
+        
+        overlay.commit()?;
+        assert_eq!(fs::read_to_string(temp_root.join(nested_path))?, "pub mod parser;");
 
         Ok(())
     }

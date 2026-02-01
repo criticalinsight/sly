@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use crate::error::{Result, SlyError};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -29,7 +29,7 @@ impl McpClient {
             protocol_version: "2024-11-05".to_string(),
             capabilities: ClientCapabilities {
                 roots: Some(std::collections::HashMap::new()),
-                sampling: None,
+                sampling: Some(std::collections::HashMap::new()),
             },
             client_info: ClientInfo {
                 name: "sly-mcp-client".to_string(),
@@ -40,29 +40,26 @@ impl McpClient {
         let request = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             method: "initialize".to_string(),
-            params: Some(serde_json::to_value(params)?),
+            params: Some(serde_json::to_value(params).map_err(|e| SlyError::Mcp(e.to_string()))?),
             id: Some(Value::Number(serde_json::Number::from(1))),
         };
 
         self.transport.send(&request).await?;
 
-        // Wait for response (Blocking for now during init)
-        // In a real async actor system, we'd have a correlation map.
-        // For simplified "Design First", we assume simple sequential init.
         if let Some(line) = self.transport.receive_line().await? {
-            let response: JsonRpcResponse = serde_json::from_str(&line)?;
+            let response: JsonRpcResponse = serde_json::from_str(&line).map_err(|e| SlyError::Mcp(e.to_string()))?;
             
             if let Some(error) = response.error {
-                 return Err(anyhow!("MCP Initialize Error: {}", error.message));
+                 return Err(SlyError::Mcp(format!("MCP Initialize Error: {}", error.message)));
             }
 
             if let Some(result) = response.result {
                  // Store server info from result["serverInfo"] / ["capabilities"]
                  let info: ClientInfo = serde_json::from_value(result["serverInfo"].clone())
-                     .context("Missing serverInfo in initialize response")?;
+                     .map_err(|_| SlyError::Mcp("Missing serverInfo in initialize response".to_string()))?;
                  
                  let caps: ClientCapabilities = serde_json::from_value(result["capabilities"].clone())
-                     .context("Missing capabilities in initialize response")?;
+                     .map_err(|_| SlyError::Mcp("Missing capabilities in initialize response".to_string()))?;
 
                  *self.server_info.lock().await = Some(info);
                  *self.server_capabilities.lock().await = Some(caps);
@@ -80,7 +77,7 @@ impl McpClient {
             }
         }
 
-        Err(anyhow!("MCP Initialize unexpected response or timeout"))
+        Err(SlyError::Mcp("MCP Initialize unexpected response or timeout".to_string()))
     }
 
     pub async fn list_tools(&self) -> Result<Vec<Tool>> {
@@ -93,10 +90,10 @@ impl McpClient {
         self.transport.send(&request).await?;
 
         if let Some(line) = self.transport.receive_line().await? {
-            let response: JsonRpcResponse = serde_json::from_str(&line)?;
+            let response: JsonRpcResponse = serde_json::from_str(&line).map_err(|e| SlyError::Mcp(e.to_string()))?;
             if let Some(result) = response.result {
                 if let Some(tools_val) = result.get("tools") {
-                     let tools: Vec<Tool> = serde_json::from_value(tools_val.clone())?;
+                     let tools: Vec<Tool> = serde_json::from_value(tools_val.clone()).map_err(|e| SlyError::Mcp(e.to_string()))?;
                      return Ok(tools);
                 }
             }
@@ -117,14 +114,105 @@ impl McpClient {
         self.transport.send(&request).await?;
 
         if let Some(line) = self.transport.receive_line().await? {
-            let response: JsonRpcResponse = serde_json::from_str(&line)?;
+            let response: JsonRpcResponse = serde_json::from_str(&line).map_err(|e| SlyError::Mcp(e.to_string()))?;
             if let Some(error) = response.error {
-                return Err(anyhow!("Tool Call Error: {}", error.message));
+                return Err(SlyError::Mcp(format!("Tool Call Error: {}", error.message)));
             }
             if let Some(result) = response.result {
                 return Ok(result);
             }
         }
-        Err(anyhow!("Tool call returned no result"))
+        Err(SlyError::Mcp("Tool call returned no result".to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use tokio::sync::Mutex;
+    use std::collections::VecDeque;
+
+    struct MockTransport {
+        sent: Arc<Mutex<Vec<JsonRpcRequest>>>,
+        to_receive: Arc<Mutex<VecDeque<String>>>,
+    }
+
+    impl MockTransport {
+        fn new(responses: Vec<String>) -> Self {
+            Self {
+                sent: Arc::new(Mutex::new(Vec::new())),
+                to_receive: Arc::new(Mutex::new(responses.into())),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Transport for MockTransport {
+        async fn send(&self, message: &JsonRpcRequest) -> Result<()> {
+            self.sent.lock().await.push(message.clone());
+            Ok(())
+        }
+        async fn receive_line(&self) -> Result<Option<String>> {
+            Ok(self.to_receive.lock().await.pop_front())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_client_initialize() -> Result<()> {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "serverInfo": { "name": "test-server", "version": "1.0.0" },
+                "capabilities": { "roots": {}, "sampling": {} }
+            }
+        });
+        
+        let transport = Box::new(MockTransport::new(vec![serde_json::to_string(&response)?]));
+        let client = McpClient::new(transport);
+        
+        client.initialize().await?;
+        
+        let info = client.server_info.lock().await;
+        assert_eq!(info.as_ref().unwrap().name, "test-server");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_client_list_tools() -> Result<()> {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {
+                "tools": [
+                    { "name": "echo", "description": "Echoes input", "inputSchema": {} }
+                ]
+            }
+        });
+        
+        let transport = Box::new(MockTransport::new(vec![serde_json::to_string(&response)?]));
+        let client = McpClient::new(transport);
+        
+        let tools = client.list_tools().await?;
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "echo");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_client_call_tool() -> Result<()> {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": "any-id",
+            "result": { "output": "hello" }
+        });
+        
+        let transport = Box::new(MockTransport::new(vec![serde_json::to_string(&response)?]));
+        let client = McpClient::new(transport);
+        
+        let result = client.call_tool("echo", json!({"msg": "hello"})).await?;
+        assert_eq!(result["output"], "hello");
+        Ok(())
     }
 }

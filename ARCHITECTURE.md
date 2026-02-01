@@ -1,4 +1,4 @@
-# Architecture: Sly v2.5 (Godmode & Decomplected)
+# Architecture: Sly v0.6.0 (Godmode & Direct)
 
 ## Core Philosophy: "Maximum Intelligence, Zero Vulnerabilities"
 
@@ -7,33 +7,33 @@ Sly operates as a **high-velocity, SecOps-hardened cybernetic organism** optimiz
 ### Strategic Foundation (The Hickey Lens)
 
 1.  **Temporal Decoupling**: The **Cortex** is a pure conduit. Its role is routing, not execution. By separating impulse reception from execution handlers, we eliminate temporal braiding.
-2.  **Identity vs. Value**: **OverlayFS** treats the filesystem as a sequence of immutable snapshots. Every specualtive action yields a new "Value" of the codebase, leaving the process "Identity" untangled.
-3.  **Data-Orientation**: All internal engine communication (Reflexion, Knowledge, Janitor) occurs via "dumb" data (Structs/Enums). We prioritize unentangled roots over complex object taxonomies.
-4.  **Vim Philosophy**: Composition over Monoliths. We transform data through small, ortho-gonal functions: `Impulse -> Context -> Action`.
-5.  **Decomplection & Workspace Hygiene**: Formal separation of source code ("Value") from transient build state ("Garbage"). We maintain a minimal indexing surface by explicitly ignoring accidental complexity like `/target`, `node_modules`, and agent metadata.
+2.  **Identity vs. Value**: **OverlayFS** treats the filesystem as a sequence of immutable snapshots. Every speculative action yields a new "Value" of the codebase, leaving the process "Identity" untangled.
+3.  **Data-Orientation**: All internal engine communication occurs via **Impulses** (Enums). We prioritize unentangled variants over complex object taxonomies.
+4.  **Vim Philosophy**: Composition over Monoliths. We transform data through direct handler functions: `Impulse -> Action`.
+5.  **De-complecting Persistence**: Formal separation of **Logic** (Datalog) from **Storage** (RocksDB). By introducing an **Ephemeral Mode** (`:memory:`), we allow the OODA loop to act as a pure function on code-values without being blocked by a global process lock.
+6.  **Workflow Discovery**: Composition over fixed menus. The Supervisor dynamically discovers routines in `.agent/workflows/`, allowing the agent's capabilities to evolve as data files rather than code changes.
 
 ```mermaid
 graph TD
     subgraph "Persistent Layer (Identity)"
-        Sup[Sly Supervisor] -->|Launch| Exec[Sly Agent Executor]
-        Exec -->|Facts| Outbox{{Decomplected Outbox}}
-        Outbox -->|Poll| Sup
-        Sup -->|Poll Metadata| Cozo[CozoDB event_log]
-        Sup -->|Batched Broadcast| Tele[Telegram Telemetry]
-        User((User)) -->|Commands| Tele
-        Tele -->|Signals| Sup
+        Sup[Sly Supervisor] -->|Control| User((User))
+        User -->|Task| Sup
+        Sup -->|Proactive Pulse| User
+        Sup -->|Command| Exec[Sly Agent Executor]
+        Exec -->|State| Cozo[CozoDB Datalog]
     end
 
     subgraph "Transient Layer (Value)"
-        Exec -->|Inference| Gemini[Gemini 2.5 Flash]
+        Exec -->|Observation| Gemini[Gemini 3.0 Flash]
         Exec -->|Speculate| Overlay[OverlayFS Safety Shield]
-        Overlay -->|Verify| Sentry[Sentry / Verifier]
+        Overlay -->|Verify| Tests[Cargo Test / Verifier]
+        Exec -->|Haptic Feedback| Mac[macOS NSSound]
         Exec -->|Record| Cozo
     end
 
-    subgraph "Apple Silicon Hardware"
-        Cozo -.->|Embeddings| Metal[Metal GPU]
-        Exec -.->|Inference| PCore[P-Cores]
+    subgraph "Hardware Layer"
+        Exec -.->|Reasoning| PCore[P-Cores]
+        Cozo -.->|Storage| SSD[NVMe]
     end
     
     Overlay -->|Atomic Commit| FS[Real File System]
@@ -43,39 +43,45 @@ graph TD
 
 ### 0. `Cortex` (The Nervous System)
 - **Role**: Event-Driven Coordination & QoS with **Variable Thinking**.
-- **Location**: `src/core/cortex.rs` & `src/core/loop.rs`.
 - **Implementation**: 
     - **QoS**: Biased `tokio::select!` loop with dual channels (`Priority` vs `Background`).
-    - **Reasoning**: `ThinkingLevel` enum controls Gemini 3.0 Flash effort (High/Low/Minimal).
-- **v2.4 Hardening**: System instructions are resident in the Cortex, enforcing the "Godmode" identity across all models.
+    - **Haptics**: Integration with native macOS sound system (`afplay`) for real-time auditory status updates.
+    - **Reasoning**: `ThinkingLevel` enum controls Gemini 2.5/3.0 effort (High/Low/Minimal).
+- **v2.4 Hardening**: System instructions are resident in the Cortex, enforcing the "Godmode" identity across all sessions.
 
 ### 1. `OverlayFS` (The Safety Shield)
 - **Role**: Transactional Filesystem Isolation ("Speculative Execution").
 - **Location**: `src/safety/overlay.rs`.
 - **Logic**: All `WriteFile` directives target a Copy-on-Write overlay. No changes reach the real filesystem without a `Commit` after passing the **Crucible** (verification tests).
 
-### 2. `ActiveMemory` (The Hippocampus)
-- **Role**: Graph-Guided Vector Store (CozoDB).
-- **Implementation**: Metal-accelerated embeddings via `candle` (**BGE**). Neighborhood expansion replaces brute-force RAG. 
-- **Reliability**: Hardened Datalog query generation with robust character escaping and recursive retry logic to handle DB locks.
+### 2. `Memory` (The Datalog Engine)
+- **Role**: Graph-Guided State Management & Heuristic Recall.
+- **De-complecting Strategy**: 
+    - **Persistent Engine (`rocksdb`)**: Used by the Supervisor for long-term audit trails and verifiable compute.
+    - **Ephemeral Engine (`mem`)**: Used by CLI sessions and parallel workflows for zero-latency execution.
+- **Cognition**: **Heuristic Persistence** allows the agent to store and recall specialized technical patterns. In Ephemeral mode, these are treated as transient session values.
+- **Efficiency**: High-speed keyword and neighbor traversal for sub-millisecond context recall.
 
-### 3. `The Sentinel` (Security Gate)
+### 3. `Reflexion` (The Self-Healing Loop)
+- **Role**: Recursive Error Correction.
+- **Logic**: Intercepts non-zero exit codes from `ExecShell`. Spawns a transient sub-session to analyze the error (stderr), fix the source, and verify before returning control.
+- **Philosophy**: "Failure is just another Value to be processed."
+
+### 4. `MCP Ecosystem` (Sovereign & Pluggable)
+- **Implementation**: Internal registry in `src/mcp/` using the `LocalMcp` trait.
+    - **Auto-Discovery**: Dynamic scanning of `~/.sly/mcp/` for executable providers.
+    - **UKR**: Broadcast search orchestration across all registered clients.
+    - **Chaining**: Stateful result persistence in `CozoDB` (`last_action_result`) allows data-piping between turns.
+    - **Native Tools**: `browser` (headless_chrome), `cloud` (wrangler/aws), and `fetch` (lightweight reqwest).
+- **Safety**: Tools are subject to the same **OverlayFS** Speculative Safety rules as the core engine.
+
+### 5. `The Sentinel` (Security Gate)
 - **Role**: Automated Linting & Safety Audits.
-- **Tools**: `cargo clippy`, `SemanticLinter`, and parallel persona-based **Debates** (Security vs Performance).
+- **Tools**: `cargo clippy` and persona-based **Debates**.
 
 ### 5. `The Supervisor` (Identity Guard)
-- **Role**: Process Persistence, Remote Control, & Health Monitoring.
-- **Location**: `src/core/supervisor.rs`.
+- **Role**: Process Persistence & Remote Control.
 - **Implementation**: 
-    - **Persistence**: Managed via macOS `LaunchAgents`.
-    - **Concurrency**: Uses **Read-Only transient DB connections** to poll the `event_log` without interfering with the Executor's write-locks.
-    - **Telemetry**: 
-        - **Decomplected Outbox**: High-priority facts bypass the DB via a filesystem-based outbox (`.sly/outbox/`), eliminating database lock contention.
-        - **Semantic Batching**: Intelligent grouping that condenses identical events (e.g., 50x ERRORs) into single reports per cycle.
-        - **Interactive Formats**: Formatted Telegram notifications for artifacts (plans, tasks, walkthroughs) with inline lifecycle management.
-    - **Resource Optimization**: 
-        - **Lightweight Access**: Uses `Memory::new_light` to skip expensive GPU/Embedding initialization during background polling.
-        - **Adaptive Polling**: Rate-limiting and lookback controls to prevent Telegram throttling and reduce idle CPU load.
-    - **Observability**: Remote log streaming (`/logs`) and multi-level crash detection.
-    - **Auto-Heal (Circuit Breaker)**: Smart retry policy that suspends healing if the agent crashes 3 times within 10 minutes.
-    - **Singleton Enforcement**: PID-aware file locking (`.sly/supervisor.lock`) for safe multi-session management.
+    - **Control Plane**: Unified Telegram loop for task initiation and management.
+    - **Predictive Pulse**: Proactive background analysis of `TASKS.md` and codebase state during idle cycles (every 5 mins).
+    - **Persistence**: Single-binary execution with PID-aware locking (`.sly/supervisor.lock`).

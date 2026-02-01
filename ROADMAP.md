@@ -1,53 +1,50 @@
-# Roadmap: Sly
+# Sly Roadmap: The Pursuit of Simplicity
 
-## 🚩 v0.1.0: The Foundation (✅ Completed)
-*   **Core Agent Loop**: Input -> Context -> Prompt -> LLM -> Output.
-*   **Context Cannon**: Recursive file reading with exclusion logic.
-*   **Embedded Memory**: CozoDB (RocksDB) integration with `candle`.
-*   **Direct API**: Clean connection to Gemini 3 Pro.
+> "Simplicity is prerequisite for reliability." — Edsger W. Dijkstra (Channelled by Rich Hickey)
 
-## 🚩 v0.2.4: The Supervisor Release (✅ Completed)
-*   **Bimodal Roles**: Switch between Supervisor (Architect) and Executor (Builder).
-*   **Symbol Cannon**: Signature-level codebase awareness for token efficiency.
-*   **Structured Directives**: JSON-based coordination protocol.
-*   **Task Compression**: Automatic archival of long-running `TASKS.md` histories.
+We reject the path of "Easy". We do not complect mechanism with policy, nor state with identity. Sly is not a bot; Sly is a coordination value.
 
-## 🚩 v0.3.5: The Auto-Didact Release (✅ Completed)
-*   **Workspace Awareness**: Boot-time detection of `Cargo.toml`, `package.json`, and Python manifests.
-*   **Recursive Self-Teaching**: Concurrent scraping of official documentation from `docs.rs`, `npmjs`, and `pypi`.
-*   **Weighted Technical RAG**: Boosted vector search prioritizing code definitions over general text.
-*   **Parallel Scaling**: High-performance ingestion using `rayon` and `futures` for 4x faster learning.
-*   **MCP Support**: Full stdio client for Model Context Protocol servers.
+## The Foundation (Completed)
+*We have built the loom. Now we must weave.*
 
-## 🚩 v0.5.0: Relational Intelligence (✅ Completed)
-*   **Knowledge Graph**: Relational-Graph-Vector hybrid mapping for cross-file dependency logic.
-*   **Infinite KV Caching**: Leveraging Gemini context caching to handle 1M+ token codebases with zero latency.
-*   **Haptic Telemetry**: Integration with macOS `say` and system notifications for headless progress tracking.
-*   **Registry Monitoring**: Proactive notifications when ingested documentation libraries have upstream updates.
-
-## 🚩 v1.0.0: The "Pro" Release (✅ Completed)
-*   **Predictive Context**: Pre-fetching files based on architectural traversal before the LLM asks.
-*   **Multi-Agent Swarm**: Spawn parallel "Worker Nanos" to handle independent subsystems concurrently.
-*   **Self-Evolution**: Dynamic tool generation via compiled `.wasm` plugins for specialized tasks.
-*   **Visual Auditor**: Multimodal analysis of UI and diagrams using screenshot capture via `host-scripting`.
-
-## � v1.1.0: Context Hyper-Efficiency (✅ Completed)
-*   **Differential Symbol Sync**: Only indexing changed lines in the Knowledge Graph for sub-100ms real-time workspace awareness.
-*   **Compressed Semantic Hashes**: Representing entire modules in the prompt using ultra-compact architectural "fingerprints".
-*   **Linguistic Pruning**: AI-guided stripping of redundant comments and boilerplate from context to maximize reasoning density.
-*   **Local RAG Re-ranking**: Using the local `candle` engine to prune the Top-50 vector hits down to the Top-10 critical symbols.
-
-## � v1.2.0: Verified Autonomy (✅ Completed)
-*   **Self-Correcting "Debate" Loops**: Multi-persona LLM sessions to audit complex logic changes.
-*   **Rollback Snapshots**: Zero-cost restoration of workspace state via `.sly/snapshots` directory.
-*   **Semantic Linting**: LLM-guided linting for catching logical API misuse that standard compilers miss.
-*   **Multimodal Vision**: Screenshot capture passed to LLM for visual UI verification.
-
-## 🚩 v1.3.0: Godmode Hardening (✅ Completed)
-*   **Decomplected Telemetry**: Outbox-based asynchronous event relay to eliminate database lock contention.
-*   **Semantic Telemetry Batching**: Intelligent summarization of high-frequency events to prevent Telegram flooding.
-*   **Lightweight Health Monitoring**: Background polling with minimal IO and zero GPU overhead.
-*   **Process-Level Singleton Guard**: PID-aware locking protocol for robust multi-instance safety.
+- [x] **Rust Migration**: Shedding the incidental complexity of Python.
+- [x] **Singleton Enforcement**: Identity requires singular existence.
+- [x] **Native Observability**: `sly-monitor` as a separate, orthogonal eye.
+- [x] **Recursive Reflexion**: Errors are just data to be reasoned about.
+- [x] **MCP Sovereignty**: Tools are capabilities, not code.
 
 ---
-*Last Updated: January 23, 2026*
+
+## Phase 5: Decomplecting I/O (The Next Epoch)
+*Currently, Sly is braided with Telegram. This is limiting.*
+
+- [ ] **The Event Bus (Pure Signal)**:
+    - Eliminate hard-coded Telegram dependencies from the Core.
+    - Implementing a pure `Event` schema (CloudEvents or simple Maps).
+    - *Why*: The Core should not know about "Chat IDs", only "Destinations".
+- [ ] **The Adapter Pattern (I/O Plugins)**:
+    - `sly-telegram`: A completely separate process that translates `Events` <=> `Telegram API`.
+    - `sly-cli`: A separate process for stdin/stdout interaction.
+    - *Why*: Changing the medium should not require recompiling the mind.
+
+## Phase 6: Data-Oriented Mind
+*State is not an object. State is a value at a point in time.*
+
+- [ ] **The Immutable Ledger**:
+    - Move all memory from `struct` fields to `CozoDB`.
+    - Every "thought", "action", and "result" is a fact tuple `[entity, attribute, value, tx, added]`.
+    - *Why*: We gain time-travel debugging and "Resume-Anywhere" capabilities for free.
+- [ ] **Semantic Specs**:
+    - Define tool capabilities as `edn` (or JSON) data, not Rust traits.
+    - Validation via data rules, not compiler checks (Runtime flexibility).
+
+## Phase 7: Generative Simplicity
+*The system creates its own extensions.*
+
+- [ ] **Self-Synthesized Adapters**:
+    - Sly writes the code for a new I/O adapter (e.g., Discord) and launches it.
+    - *Why*: The ultimate automation is the automation of the automaton's interface.
+
+---
+
+> "It is better to have 100 functions operate on one data structure than 10 functions on 10 structures."

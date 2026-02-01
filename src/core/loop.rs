@@ -1,8 +1,7 @@
 use tokio::sync::mpsc::Receiver;
 use crate::io::events::Impulse;
 use crate::core::state::GlobalState;
-use crate::core::directives::Directive;
-use crate::core::interpreter::DirectiveInterpreter;
+use crate::core::interpreter::ImpulseInterpreter;
 use std::sync::Arc;
 use colored::*;
 
@@ -11,27 +10,24 @@ pub async fn cortex_loop(
     mut background_rx: Receiver<Impulse>,
     state: Arc<GlobalState>
 ) {
-    println!("{}", "🧠 Cortex Event Bus: ONLINE (QoS Enabled)".green().bold());
+    println!("{}", "🧠 Cortex Event Bus: ONLINE (Godmode Static)".green().bold());
     
     loop {
         let impulse = tokio::select! {
             biased;
 
-            Some(imp) = priority_rx.recv() => Some((imp, "FAST")),
-            Some(imp) = background_rx.recv() => Some((imp, "SLOW")),
+            Some(imp) = priority_rx.recv() => Some(imp),
+            Some(imp) = background_rx.recv() => Some(imp),
             else => None,
         };
 
-        if let Some((imp, lane)) = impulse {
-            let directives = route_impulse(imp, lane);
+        if let Some(imp) = impulse {
             let mut should_shutdown = false;
-
-            for directive in directives {
-                if directive.type_name == "shutdown" {
-                    should_shutdown = true;
-                }
-                DirectiveInterpreter::interpret(directive, state.clone()).await;
+            if matches!(imp, Impulse::Terminate | Impulse::SystemInterrupt) {
+                should_shutdown = true;
             }
+            
+            ImpulseInterpreter::interpret(imp, state.clone()).await;
 
             if should_shutdown {
                 println!("{}", "👋 Graceful shutdown complete.".green());
@@ -39,45 +35,6 @@ pub async fn cortex_loop(
             }
         } else {
             break;
-        }
-    }
-}
-
-fn route_impulse(impulse: Impulse, lane: &str) -> Vec<Directive> {
-    let lane_tag = if lane == "FAST" { "⚡".yellow() } else { "🐢".blue() };
-    use serde_json::json;
-    
-    match impulse {
-        Impulse::InitiateSession(input) => {
-            println!("{} [InitiateSession] {}", lane_tag, input);
-            vec![Directive::new("initiate_session", json!({ "input": input }))]
-        }
-        Impulse::ThinkStep(session_id) => {
-            vec![Directive::new("think", json!({ "session_id": session_id }))]
-        }
-        Impulse::Observation(session_id, obs) => {
-            vec![Directive::new("observe", json!({ "session_id": session_id, "observation": obs }))]
-        }
-        Impulse::FileSystemEvent(event) => {
-            // Convert notify::Event to a value. For now just paths.
-            let paths: Vec<String> = event.paths.iter().map(|p| p.to_string_lossy().to_string()).collect();
-            vec![Directive::new("fs_batch", json!({ "paths": paths }))]
-        }
-        Impulse::SwarmSignal(id, status) => {
-            println!("{} [Swarm] Worker {} reported: {}", lane_tag, id, status);
-            vec![] // Noop for now
-        }
-        Impulse::BootstrapSkills => {
-            vec![Directive::new("bootstrap_skills", json!({}))]
-        }
-        Impulse::JanitorWakeup => {
-            vec![Directive::new("maintenance", json!({}))]
-        }
-        Impulse::SystemInterrupt => {
-            vec![Directive::new("shutdown", json!({}))]
-        }
-        Impulse::Error(e) => {
-            vec![Directive::new("error", json!({ "message": e }))]
         }
     }
 }

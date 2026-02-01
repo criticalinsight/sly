@@ -6,9 +6,20 @@ pub enum Impulse {
     ThinkStep(String),
     Observation(String, String),
     FileSystemEvent(Event),
-    SwarmSignal(u64, String), // WorkerId, Status
-    BootstrapSkills,
-    JanitorWakeup,
+    ThoughtStream(String, String),
+    Undo(String), // session_id
+    Terminate,
     SystemInterrupt,
     Error(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_impulse_debug() {
+        let impulse = Impulse::SystemInterrupt;
+        assert!(format!("{:?}", impulse).contains("SystemInterrupt"));
+    }
 }

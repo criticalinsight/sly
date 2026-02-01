@@ -1,11 +1,10 @@
 pub mod backend_cozo;
-pub mod engine_candle;
 pub mod store_graph;
 
 pub use store_graph::{Memory, GraphNode, LibraryEntry};
 
 use async_trait::async_trait;
-use anyhow::Result;
+use crate::error::Result;
 use serde_json::Value;
 
 #[async_trait]
@@ -17,8 +16,7 @@ pub trait MemoryStore: Send + Sync {
     async fn forget(&self, id: &str) -> Result<()>;
     async fn count_nodes(&self) -> Result<usize>;
     
-    // Skills (WASM)
+    // Skills (WASM) - Note: WASM logic was partially decommissioned but traits might remain for compat
     async fn register_skill(&self, name: &str, code: &str, desc: &str, signature: &str) -> Result<()>;
     async fn get_skill(&self, name: &str) -> Result<Option<String>>;
 }
-

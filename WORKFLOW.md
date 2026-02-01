@@ -15,9 +15,9 @@ When you execute `cargo run --release`, the following initialization steps occur
 
 3.  **Memory Mounting**:
     *   Connects to the embedded **CozoDB** instance at `.sly/cozo.db`.
-    *   **Schema Check**: Creates `library`, `nodes`, `edges`, and `cache` tables.
-    *   **Embedding Model**: Initializes `candle` (BERT) for local execution on CPU/Metal.
-    *   *Note*: This ensures zero-latency access to long-term memory and official documentation.
+    *   **Schema Check**: Creates `nodes`, `edges`, `kv_cache`, `sync_log`, `event_log`, `sessions`, `session_messages`, and `session_snapshots` tables.
+    *   **Heuristic Recall**: Initializes the **Cross-session Heuristic Persistence** layer via positional Datalog queries.
+    *   *Note*: This ensures zero-latency access to long-term architectural memory.
 
 4.  **Auto-Didact Engine Scan**:
     *   **Manifest Detection**: Scans for `Cargo.toml`, `package.json`, `requirements.txt`, and `pyproject.toml`.
@@ -34,8 +34,9 @@ Sly v0.2.4 features **Persistent Autonomy**. The agent no longer exits after com
 
 ### Step A: Perception (The Polling Wait)
 - **Task Detection**: Sly checks `TASKS.md` for unchecked boxes `[ ]`.
-- **Idle State**: If all tasks are `[x]`, Sly sleeps for 5 seconds and performs one final **Secure Git Sync**.
-- **Resume**: As soon as a new task appears, the **Context Cannon** fires.
+- **Predictive Pulse**: Every 5 minutes of idle time, the **Supervisor** performs a background analysis of the staged diffs and `TASKS.md`, generating a **Proactive Insight** sent via Telegram/Haptics.
+- **Idle State**: If all tasks are `[x]`, Sly sleeps for 5 seconds and monitors for new impulses.
+- **Resume**: As soon as a new task or remote directive appears, the **Context Cannon** fires.
 
 ### Step B: The Context Cannon
 *   **Recursive Scan**: Sly walks the project directory.
@@ -46,8 +47,9 @@ Sly v0.2.4 features **Persistent Autonomy**. The agent no longer exits after com
 *   A comprehensive prompt is constructed:
     ```
     [SYSTEM_RULES]       <-- Behavioral directives & Safety Governor
+    [LOCAL_HEURISTICS]   <-- Cross-session technical patterns (from CozoDB)
     [OFFICIAL_DOCS]      <-- Recursive context from the Auto-Didact library
-    [RETRIEVED_LESSONS]  <-- Vector context from CozoDB
+    [RETRIEVED_FACTS]    <-- Graph-guided context from CozoDB
     [FULL_CODEBASE]      <-- The raw source code
     [USER_INPUT]         <-- Task prompt or Polling status
     ```
@@ -64,7 +66,9 @@ Before modifying your files, Sly speculative executes:
 
 ### Step E: Execution
 1.  **Approval**: In manual mode, waits for user `[y/N]`. In autonomous mode, consumes the "Governor" approval automatically.
-2.  **Commit**: Verified changes are moved from the shadow workspace to your real files.
+2.  **Commit / Haptics**: Verified changes are moved from the overlay to your real files. 
+    - **Success**: Triggers macOS "Glass" sound.
+    - **Failure**: Triggers macOS "Basso" sound.
 3.  **Git Persistence**: Automatically runs `git add`, `git commit`, and `git push` (after security scanning for leaked keys).
 
 ## 3. Background Hygiene (The Janitor)

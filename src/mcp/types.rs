@@ -30,6 +30,7 @@ pub struct JsonRpcError {
 // --- MCP Protocol Types ---
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct InitializeParams {
     pub protocol_version: String,
     pub capabilities: ClientCapabilities,
@@ -49,6 +50,7 @@ pub struct ClientInfo {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct Tool {
     pub name: String,
     pub description: Option<String>,
@@ -82,4 +84,36 @@ pub struct Resource {
     pub mime_type: Option<String>,
     pub text: Option<String>,
     pub blob: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_jsonrpc_serialization() {
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "call".to_string(),
+            params: Some(serde_json::json!({"arg": 1})),
+            id: Some(serde_json::json!(1)),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"jsonrpc\":\"2.0\""));
+    }
+
+    #[test]
+    fn test_jsonrpc_deserialization() {
+        let json = r#"{"jsonrpc":"2.0","result":{"ok":true},"id":1}"#;
+        let resp: JsonRpcResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.jsonrpc, "2.0");
+        assert_eq!(resp.result.unwrap()["ok"], true);
+    }
+
+    #[test]
+    fn test_tool_content_serialization() {
+        let content = ToolContent::Text { text: "hello".to_string() };
+        let json = serde_json::to_string(&content).unwrap();
+        assert_eq!(json, "{\"type\":\"text\",\"text\":\"hello\"}");
+    }
 }

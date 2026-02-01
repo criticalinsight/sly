@@ -1,111 +1,54 @@
-use anyhow::{anyhow, Result};
-use cozo::{DataValue, ScriptMutability};
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-
-
-use super::backend_cozo::{CozoBackend, vec_to_datavalue};
-use super::engine_candle::EmbeddingEngine;
-use super::MemoryStore;
+use crate::memory::backend_cozo::CozoBackend;
+use crate::memory::MemoryStore;
+use crate::error::{Result, SlyError};
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
+use cozo::{DataValue, ScriptMutability};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct GraphNode {
     pub id: String,
     pub content: String,
+    pub signature: String,
     pub node_type: String, // struct, fn, impl, file
     pub path: String,
     pub edges: Vec<String>, // IDs of related nodes
 }
 
-pub type LibraryEntry = (String, String, String, String, String, String, Vec<f32>);
+pub type LibraryEntry = (String, String, String, String, String, String);
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TechnicalHeuristic {
+    pub id: String,
+    pub context: String, // mapped to 'tag'
+    pub solution: String, // mapped to 'val'
+    pub success_weight: f64,
+}
 
 pub struct Memory {
     backend: CozoBackend,
-    engine: Option<EmbeddingEngine>,
 }
 
 impl Memory {
     pub async fn new(path: &str, read_only: bool) -> Result<Self> {
         let backend = CozoBackend::new(path, read_only)?;
-        let engine = Some(EmbeddingEngine::new()?);
-
-        Ok(Self { backend, engine })
+        Ok(Self { backend })
     }
 
     pub async fn new_light(path: &str, read_only: bool) -> Result<Self> {
         let backend = CozoBackend::new(path, read_only)?;
-        Ok(Self { backend, engine: None })
+        Ok(Self { backend })
     }
 
-    pub fn embed(&self, text: &str) -> Result<Vec<f32>> {
-        self.engine.as_ref()
-            .ok_or_else(|| anyhow!("Embedding engine not initialized"))?
-            .embed(text)
-    }
-
-    pub fn batch_embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        self.engine.as_ref()
-            .ok_or_else(|| anyhow!("Embedding engine not initialized"))?
-            .batch_embed(texts)
+    pub async fn new_transient() -> Result<Self> {
+        let backend = CozoBackend::new(":memory:", false)?;
+        Ok(Self { backend })
     }
 
     pub fn record_event(&self, op: &str, data: Value) -> Result<()> {
         self.backend.record_event(op, data)
-    }
-
-    // --- Caching Logic ---
-
-    pub async fn check_cache(&self, query: &str) -> Result<Option<String>> {
-        let embedding = self.embed(query)?;
-
-        let query_script = "
-            ?[response] := ~cache:idx {
-                response |
-                query: $query_vec,
-                k: 1,
-                bind_distance: dist,
-                ef: 100
-            },
-            dist < 0.1
-        ";
-
-        let mut params = BTreeMap::new();
-        params.insert("query_vec".to_string(), vec_to_datavalue(embedding));
-
-        let result = self.backend.run_script(query_script, params, ScriptMutability::Immutable)?;
-
-        if let Some(DataValue::Str(s)) = result.rows.first().and_then(|r| r.first()) {
-            return Ok(Some(s.to_string()));
-        }
-
-        Ok(None)
-    }
-
-    pub async fn store_cache(&self, query: &str, response: &str) -> Result<()> {
-        let embedding = self.embed(query)?;
-        let id = uuid::Uuid::new_v4().to_string();
-
-        let query_script = "
-            ?[id, query, response, embedding] <- [[$id, $query, $response, $embedding]]
-            :put cache { id => query, response, embedding }
-        ";
-
-        let mut params = BTreeMap::new();
-        params.insert("id".to_string(), DataValue::from(id));
-        params.insert("query".to_string(), DataValue::from(query));
-        params.insert("response".to_string(), DataValue::from(response));
-        params.insert("embedding".to_string(), vec_to_datavalue(embedding));
-
-        self.backend.run_script(query_script, params, ScriptMutability::Mutable)?;
-
-        // Record event
-        self.backend.record_event("store_cache", serde_json::json!({
-            "query": query,
-            "response": response
-        }))?;
-        Ok(())
     }
 
     // --- Graph Node Logic ---
@@ -119,31 +62,21 @@ impl Memory {
             return Ok(());
         }
 
-        let mut contents = Vec::new();
-        for node in &nodes {
-            contents.push(node.content.clone());
-        }
-
-        let embeddings = self.batch_embed(&contents)?;
-
-        let query_script = "
-            ?[id, content, type, path, embedding] <- $nodes
-            :put nodes { id => content, type, path, embedding }
-
-            ?[from, to, rel_type] <- $edges
-            :put edges { from, to => rel_type }
+        let node_script = "
+            ?[id, content, signature, type, path] <- $nodes
+            :put nodes { id => content, signature, type, path }
         ";
 
         let mut node_rows = Vec::new();
         let mut edge_rows = Vec::new();
 
-        for (i, node) in nodes.iter().enumerate() {
+        for node in nodes.iter() {
             node_rows.push(DataValue::List(vec![
                 DataValue::from(node.id.clone()),
                 DataValue::from(node.content.clone()),
+                DataValue::from(node.signature.clone()),
                 DataValue::from(node.node_type.clone()),
                 DataValue::from(node.path.clone()),
-                vec_to_datavalue(embeddings[i].clone()),
             ]));
 
             for target in &node.edges {
@@ -155,14 +88,24 @@ impl Memory {
             }
         }
 
-        let mut params = BTreeMap::new();
-        params.insert("nodes".to_string(), DataValue::List(node_rows));
-        params.insert("edges".to_string(), DataValue::List(edge_rows));
+        let mut node_params = BTreeMap::new();
+        node_params.insert("nodes".to_string(), DataValue::List(node_rows));
 
-        self.backend.run_script(query_script, params, ScriptMutability::Mutable)
-            .map_err(|e| anyhow!("Failed to batch add nodes: {}", e))?;
+        self.backend.run_script(node_script, node_params, ScriptMutability::Mutable)
+            .map_err(|e| SlyError::Database(format!("Failed to batch add nodes (nodes part): {}", e)))?;
 
-        // Record event (once for the whole batch)
+        if !edge_rows.is_empty() {
+            let edge_script = "
+                ?[from, to, rel_type] <- $edges
+                :put edges { from, to => rel_type }
+            ";
+            let mut edge_params = BTreeMap::new();
+            edge_params.insert("edges".to_string(), DataValue::List(edge_rows));
+
+            self.backend.run_script(edge_script, edge_params, ScriptMutability::Mutable)
+                .map_err(|e| SlyError::Database(format!("Failed to batch add nodes (edges part): {}", e)))?;
+        }
+
         self.backend.record_event("batch_add_nodes", serde_json::json!({
             "count": nodes.len(),
             "paths": nodes.iter().map(|n| n.path.clone()).collect::<Vec<_>>()
@@ -176,6 +119,7 @@ impl Memory {
         self.add_node(&GraphNode {
             id,
             content: lesson.to_string(),
+            signature: String::new(),
             node_type: "lesson".to_string(),
             path: "global".to_string(),
             edges: vec![],
@@ -188,6 +132,7 @@ impl Memory {
         self.add_node(&GraphNode {
             id,
             content: heuristic.to_string(),
+            signature: String::new(),
             node_type: "heuristic".to_string(),
             path: "global".to_string(),
             edges: vec![],
@@ -195,28 +140,51 @@ impl Memory {
         .await
     }
 
-    pub async fn find_related(&self, query: &str, limit: usize) -> Result<Vec<String>> {
-        let embedding = self.embed(query)?;
+    pub async fn persist_technical_heuristic(&self, h: &TechnicalHeuristic) -> Result<()> {
+        let content = serde_json::to_string(h).map_err(|e| SlyError::Task(e.to_string()))?;
+        self.add_node(&GraphNode {
+            id: format!("h:{}", h.id),
+            content,
+            signature: String::new(),
+            node_type: "heuristic".to_string(),
+            path: "global".to_string(),
+            edges: vec![],
+        }).await
+    }
 
-        // Hybrid Search: Vector similarity + Graph traversal (placeholder logic for now)
-        let query_script = format!(
-            "
-            ?[content, dist] := ~nodes:idx {{
-                content |
-                query: $query_vec,
-                k: {},
-                bind_distance: dist,
-                ef: 100
-            }}
-            :sort dist
-        ",
-            limit
-        );
+    pub async fn recall_technical_heuristics(&self, query_text: &str, limit: usize) -> Result<Vec<TechnicalHeuristic>> {
+        let script = "
+            ?[c] := *nodes{id, content: c}, str_includes(id, 'h:'), str_includes(c, $query)
+            :limit $limit
+        ";
+        let mut params = BTreeMap::new();
+        params.insert("query".to_string(), DataValue::from(query_text.to_string()));
+        params.insert("limit".to_string(), DataValue::from(limit as i64));
+
+        let res = self.backend.run_script(script, params, ScriptMutability::Immutable)?;
+        let mut heuristics = Vec::new();
+        for row in res.rows {
+            if let Some(DataValue::Str(json)) = row.first() {
+                if let Ok(h) = serde_json::from_str::<TechnicalHeuristic>(json) {
+                    heuristics.push(h);
+                }
+            }
+        }
+        Ok(heuristics)
+    }
+
+    pub async fn find_related(&self, query: &str, limit: usize) -> Result<Vec<String>> {
+        // Fallback to simple keyword match since semantic search is removed
+        let query_script = "
+            ?[content] := *nodes{content}, content.contains($query)
+            :limit $limit
+        ";
 
         let mut params = BTreeMap::new();
-        params.insert("query_vec".to_string(), vec_to_datavalue(embedding));
+        params.insert("query".to_string(), DataValue::from(query.to_string()));
+        params.insert("limit".to_string(), DataValue::from(limit as i64));
 
-        let result = self.backend.run_script(&query_script, params, ScriptMutability::Immutable)?;
+        let result = self.backend.run_script(query_script, params, ScriptMutability::Immutable)?;
 
         let mut results = Vec::new();
         for row in result.rows {
@@ -228,10 +196,43 @@ impl Memory {
         Ok(results)
     }
 
-    // --- Library / Autodidact Logic ---
+    /// Get all symbols from a specific file path
+    pub async fn get_symbols_for_path(&self, path: &str) -> Result<Vec<GraphNode>> {
+        let query_script = "
+            ?[id, content, signature, type, path] := *nodes{id, content, signature, type, path}, 
+                str_includes(path, $path)
+        ";
 
-    // High-performance batch insertion
+        let mut params = BTreeMap::new();
+        params.insert("path".to_string(), DataValue::from(path.to_string()));
+
+        let result = self.backend.run_script(query_script, params, ScriptMutability::Immutable)?;
+
+        let mut nodes = Vec::new();
+        for row in result.rows {
+            if row.len() >= 5 {
+                let id = match &row[0] { DataValue::Str(s) => s.to_string(), _ => continue };
+                let content = match &row[1] { DataValue::Str(s) => s.to_string(), _ => String::new() };
+                let signature = match &row[2] { DataValue::Str(s) => s.to_string(), _ => String::new() };
+                let node_type = match &row[3] { DataValue::Str(s) => s.to_string(), _ => String::new() };
+                let path = match &row[4] { DataValue::Str(s) => s.to_string(), _ => String::new() };
+
+                nodes.push(GraphNode {
+                    id,
+                    content,
+                    signature,
+                    node_type,
+                    path,
+                    edges: Vec::new(),
+                });
+            }
+        }
+
+        Ok(nodes)
+    }
+
     pub async fn batch_add_library_entries(&self, entries: Vec<LibraryEntry>) -> Result<()> {
+
         if entries.is_empty() {
             return Ok(());
         }
@@ -239,13 +240,13 @@ impl Memory {
         let library_names: Vec<String> = entries.iter().map(|e| e.1.clone()).collect();
 
         let query_script = "
-            ?[id, name, version, content, language, chunk_type, embedding] <- $data
-            :put library { id => name, version, content, language, chunk_type, embedding }
+            ?[id, name, version, content, language, chunk_type] <- $data
+            :put library { id => name, version, content, language, chunk_type }
         ";
 
         let mut data_rows = Vec::new();
 
-        for (id, name, version, content, language, chunk_type, embedding_vec) in entries {
+        for (id, name, version, content, language, chunk_type) in entries {
             let row = vec![
                 DataValue::from(id),
                 DataValue::from(name),
@@ -253,7 +254,6 @@ impl Memory {
                 DataValue::from(content),
                 DataValue::from(language),
                 DataValue::from(chunk_type),
-                vec_to_datavalue(embedding_vec),
             ];
             data_rows.push(DataValue::List(row));
         }
@@ -262,9 +262,8 @@ impl Memory {
         params.insert("data".to_string(), DataValue::List(data_rows));
 
         self.backend.run_script(query_script, params, ScriptMutability::Mutable)
-            .map_err(|e| anyhow!("Failed to bulk add library entries: {}", e))?;
+            .map_err(|e| SlyError::Database(format!("Failed to bulk add library entries: {}", e)))?;
 
-        // Record event
         self.backend.record_event("batch_add_library", serde_json::json!({
             "count": entries_len,
             "library_names": library_names
@@ -274,33 +273,17 @@ impl Memory {
     }
 
     pub async fn search_library(&self, query: &str, limit: usize) -> Result<Vec<String>> {
-        let embedding = self.embed(query)?;
-
-        let query_script = format!(
-            "
-            ?[content, type, dist] := ~library:idx {{
-                content, chunk_type: type |
-                query: $query_vec,
-                k: {},
-                bind_distance: dist,
-                ef: 100
-            }}
-            // Apply weight: boost definitions
-            ?[content, score] := ?[content, type, dist],
-                weight = if type == \"definition\" {{ 0.8 }} else {{ 1.0 }},
-                score = dist * weight
-            :sort score
-            :limit {}
-        ",
-            limit * 2,
-            limit
-        );
+        let query_script = "
+            ?[content] := *library{content}, content.contains($query)
+            :limit $limit
+        ";
 
         let mut params = BTreeMap::new();
-        params.insert("query_vec".to_string(), vec_to_datavalue(embedding));
+        params.insert("query".to_string(), DataValue::from(query.to_string()));
+        params.insert("limit".to_string(), DataValue::from(limit as i64));
 
-        let result = self.backend.run_script(&query_script, params, ScriptMutability::Immutable)
-            .map_err(|e| anyhow!("Library search failed: {}", e))?;
+        let result = self.backend.run_script(query_script, params, ScriptMutability::Immutable)
+            .map_err(|e| SlyError::Database(format!("Library search failed: {}", e)))?;
 
         let mut results = Vec::new();
         for row in result.rows {
@@ -326,48 +309,18 @@ impl Memory {
         Ok(names)
     }
 
-    pub async fn get_known_libraries_with_versions(&self) -> Result<Vec<(String, String)>> {
-        let script = "?[name, version] := *library{name, version}";
-        let result = self.backend.run_script(script, Default::default(), ScriptMutability::Immutable)?;
-
-        let mut libs = Vec::new();
-        for row in result.rows {
-            if let (Some(DataValue::Str(name)), Some(DataValue::Str(version))) = (row.first(), row.get(1)) {
-                libs.push((name.to_string(), version.to_string()));
-            }
-        }
-        libs.sort();
-        libs.dedup();
-        Ok(libs)
-    }
-
-    pub async fn register_library(&self, name: &str, version: &str) -> Result<()> {
+    pub async fn get_neighborhood(&self, node_id: &str, depth: usize) -> Result<Vec<String>> {
+        // Multi-hop expansion via Datalog recursion
         let script = "
-            ?[id, name, version, content, language, chunk_type, embedding] := 
-                id = $id, name = $name, version = $version, 
-                content = \"\", language = \"\", chunk_type = \"metadata\",
-                embedding = $empty_vec
-            :put library { id => name, version, content, language, chunk_type, embedding }
+            visited[id, 0] := id = $id
+            visited[id, d+1] := visited[prev_id, d], *edges{from: prev_id, to: id}, d < $depth
+            visited[id, d+1] := visited[prev_id, d], *edges{from: id, to: prev_id}, d < $depth
+            
+            ?[content] := visited[id, d], *nodes{id, content}
         ";
         let mut params = BTreeMap::new();
-        params.insert("id".to_string(), DataValue::from(format!("{}_{}", name, version)));
-        params.insert("name".to_string(), DataValue::from(name.to_string()));
-        params.insert("version".to_string(), DataValue::from(version.to_string()));
-        params.insert("empty_vec".to_string(), vec_to_datavalue(vec![0.0; 384]));
-        
-        self.backend.run_script(script, params, ScriptMutability::Mutable)
-            .map_err(|e| anyhow!("Failed to register library {}: {}", name, e))?;
-        Ok(())
-    }
-
-    pub async fn get_neighborhood(&self, path: &str) -> Result<Vec<String>> {
-        let script = "
-            ?[content] := *nodes{path, content}, path = $path
-            ?[content] := *nodes{id, content}, *edges{from: $path, to: id}
-            ?[content] := *nodes{id, content}, *edges{from: id, to: $path}
-        ";
-        let mut params = BTreeMap::new();
-        params.insert("path".to_string(), DataValue::from(path.to_string()));
+        params.insert("id".to_string(), DataValue::from(node_id.to_string()));
+        params.insert("depth".to_string(), DataValue::from(depth as i64));
 
         let res = self.backend.run_script(script, params, ScriptMutability::Immutable)?;
 
@@ -380,39 +333,50 @@ impl Memory {
         Ok(results)
     }
 
-    // --- KV / Sync Logic ---
-
-    pub async fn get_kv_cache(&self, hash: &str) -> Result<Option<String>> {
-        let script = "?[cache_id] := kv_cache { hash: $hash, cache_id }";
+    pub async fn expand_context(&self, initial_ids: Vec<String>, depth: usize) -> Result<Vec<String>> {
+        if initial_ids.is_empty() { return Ok(vec![]); }
+        
+        let script = "
+            visited[id, 0] <- $initial_ids
+            visited[id, d+1] := visited[prev_id, d], *edges{from: prev_id, to: id}, d < $depth
+            visited[id, d+1] := visited[prev_id, d], *edges{from: id, to: prev_id}, d < $depth
+            
+            ?[content] := visited[id, d], *nodes{id, content}
+        ";
         let mut params = BTreeMap::new();
-        params.insert("hash".to_string(), DataValue::from(hash.to_string()));
+        params.insert("initial_ids".to_string(), DataValue::List(initial_ids.into_iter().map(DataValue::from).collect()));
+        params.insert("depth".to_string(), DataValue::from(depth as i64));
 
         let res = self.backend.run_script(script, params, ScriptMutability::Immutable)?;
-        if let Some(row) = res.rows.first() {
+
+        let mut results = Vec::new();
+        for row in res.rows {
             if let Some(DataValue::Str(s)) = row.first() {
-                return Ok(Some(s.to_string()));
+                results.push(s.to_string());
             }
         }
-        Ok(None)
+        Ok(results)
     }
 
-    pub async fn set_kv_cache(&self, hash: &str, cache_id: &str) -> Result<()> {
-        let script = "
-            ?[hash, cache_id, created_at] <- [[$hash, $cache_id, $now]]
-            :put kv_cache { hash => cache_id, created_at }
-        ";
-        let now = chrono::Utc::now().timestamp();
-        let mut params = BTreeMap::new();
-        params.insert("hash".to_string(), DataValue::from(hash.to_string()));
-        params.insert("cache_id".to_string(), DataValue::from(cache_id.to_string()));
-        params.insert("now".to_string(), DataValue::from(now));
+    pub async fn get_visual_neighborhood(&self, node_id: &str, depth: usize) -> Result<String> {
+        let nodes = self.get_neighborhood(node_id, depth).await?;
+        if nodes.is_empty() { return Ok("   (Empty Neighborhood)".to_string()); }
 
-        self.backend.run_script(script, params, ScriptMutability::Mutable)?;
-        Ok(())
+        let mut output = format!("<b>Graph Neighborhood for <code>{}</code>:</b>\n", node_id);
+        for (i, content) in nodes.iter().enumerate().take(15) {
+            let prefix = if i == nodes.len() - 1 { "└── " } else { "├── " };
+            let lines: Vec<&str> = content.lines().collect();
+            let first_line = lines.first().unwrap_or(&"").chars().take(60).collect::<String>();
+            output.push_str(&format!("<code>{}</code>{} ...\n", prefix, crate::io::telegram::html_escape(&first_line)));
+        }
+        if nodes.len() > 15 {
+             output.push_str(&format!("<i>... and {} more nodes</i>", nodes.len() - 15));
+        }
+        Ok(output)
     }
 
     pub async fn check_sync_status(&self, path: &str) -> Result<Option<(i64, String)>> {
-        let script = "?[last_ingested, content_hash] := sync_log { path: $path, last_ingested, content_hash }";
+        let script = "?[last_ingested, content_hash] := *sync_log { path: $path, last_ingested, content_hash }";
         let mut params = BTreeMap::new();
         params.insert("path".to_string(), DataValue::from(path.to_string()));
 
@@ -421,8 +385,7 @@ impl Memory {
         if let Some(row) = res.rows.first() {
             let ts = match row.first() {
                 Some(DataValue::Num(n)) => {
-                    let s = format!("{:?}", n);
-                    s.parse::<i64>().unwrap_or(0)
+                    format!("{:?}", n).parse::<f64>().unwrap_or(0.0) as i64
                 }
                 _ => 0,
             };
@@ -456,52 +419,22 @@ impl Memory {
         self.backend.run_script(script, BTreeMap::new(), ScriptMutability::Immutable)
     }
 
-    pub async fn register_skill(&self, name: &str, code: &str, desc: &str, signature: &str) -> Result<()> {
-        let script = "
-            ?[name, code, description, signature] <- [[$name, $code, $desc, $sig]]
-            :put skills { name, code, description, signature }
-        ";
-        let mut params = BTreeMap::new();
-        params.insert("name".to_string(), DataValue::from(name.to_string()));
-        params.insert("code".to_string(), DataValue::from(code.to_string()));
-        params.insert("desc".to_string(), DataValue::from(desc.to_string()));
-        params.insert("sig".to_string(), DataValue::from(signature.to_string()));
-
-        self.backend.run_script(script, params, ScriptMutability::Mutable)?;
-        Ok(())
-    }
-
-    pub async fn get_skill(&self, name: &str) -> Result<Option<String>> {
-        let script = "?[code] := *skills{name: $name, code}";
-        let mut params = BTreeMap::new();
-        params.insert("name".to_string(), DataValue::from(name.to_string()));
-
-        let res = self.backend.run_script(script, params, ScriptMutability::Immutable)?;
-        if let Some(row) = res.rows.first() {
-            if let Some(DataValue::Str(code)) = row.first() {
-                return Ok(Some(code.to_string()));
-            }
-        }
-        Ok(None)
-    }
-
-    // --- Session Persistence (Phase 5) ---
-
     pub async fn create_session(&self, session: &crate::core::session::AgentSession) -> Result<()> {
+        let last_result = session.last_action_result.clone().unwrap_or(serde_json::Value::Null);
         let script = "
-            ?[id, status, depth, input, created_at] <- [[$id, $status, $depth, $input, $now]]
-            :put sessions { id => status, depth, input, created_at }
+            ?[id, status, depth, input, last_result, created_at] <- [[$id, $status, $depth, $input, $last_result, $now]]
+            :put sessions { id => status, depth, input, last_result, created_at }
         ";
         let mut params = BTreeMap::new();
         params.insert("id".to_string(), DataValue::from(session.id.clone()));
         params.insert("status".to_string(), DataValue::from(format!("{:?}", session.status)));
         params.insert("depth".to_string(), DataValue::from(session.depth as i64));
         params.insert("input".to_string(), DataValue::from(session.messages.first().cloned().unwrap_or_default()));
+        params.insert("last_result".to_string(), DataValue::from(last_result));
         params.insert("now".to_string(), DataValue::from(chrono::Utc::now().timestamp()));
 
         self.backend.run_script(script, params, ScriptMutability::Mutable)?;
 
-        // Store initial messages
         for (i, msg) in session.messages.iter().enumerate() {
             self.add_session_message(&session.id, i, msg).await?;
         }
@@ -509,23 +442,35 @@ impl Memory {
     }
 
     pub async fn update_session(&self, session: &crate::core::session::AgentSession) -> Result<()> {
+        let last_result = session.last_action_result.clone().unwrap_or(serde_json::Value::Null);
         let script = "
-            ?[id, status, depth, input, created_at] := *sessions{id, input, created_at}, 
-                id = $id, status = $status, depth = $depth
-            :put sessions { id => status, depth, input, created_at }
+            ?[id, status, depth, input, last_result, created_at] := *sessions{id, input, created_at}, 
+                id = $id, status = $status, depth = $depth, last_result = $last_result
+            :put sessions { id => status, depth, input, last_result, created_at }
         ";
         let mut params = BTreeMap::new();
         params.insert("id".to_string(), DataValue::from(session.id.clone()));
         params.insert("status".to_string(), DataValue::from(format!("{:?}", session.status)));
         params.insert("depth".to_string(), DataValue::from(session.depth as i64));
+        params.insert("last_result".to_string(), DataValue::from(last_result));
 
         self.backend.run_script(script, params, ScriptMutability::Mutable)?;
 
-        // Only add the NEWEST message to avoid re-writing everything? 
-        // For simplicity and to match the 'Fact' approach, we just ensure 
-        // the current list matches. In Datalog, we can just :put the messages.
         for (i, msg) in session.messages.iter().enumerate() {
             self.add_session_message(&session.id, i, msg).await?;
+        }
+
+        // Sync Snapshots (Atomic Resilience Phase 8)
+        let snap_script = "
+            ?[session_id, snapshot_index, history] <- [[$session_id, $snapshot_index, $history]]
+            :put session_snapshots { session_id, snapshot_index => history }
+        ";
+        for (i, history) in session.snapshots.iter().enumerate() {
+            let mut snap_params = BTreeMap::new();
+            snap_params.insert("session_id".to_string(), DataValue::from(session.id.clone()));
+            snap_params.insert("snapshot_index".to_string(), DataValue::from(i as i64));
+            snap_params.insert("history".to_string(), DataValue::from(serde_json::to_value(history).unwrap_or_default()));
+            self.backend.run_script(snap_script, snap_params, ScriptMutability::Mutable)?;
         }
         Ok(())
     }
@@ -545,22 +490,24 @@ impl Memory {
     }
 
     pub async fn get_session(&self, id: &str) -> Result<Option<crate::core::session::AgentSession>> {
-        let script = "?[status, depth, input] := *sessions{id: $id, status, depth, input}";
+        let script = "?[status, depth, input, last_result] := *sessions{id: $id, status, depth, input, last_result}";
         let mut params = BTreeMap::new();
         params.insert("id".to_string(), DataValue::from(id.to_string()));
 
         let res = self.backend.run_script(script, params, ScriptMutability::Immutable)?;
         if let Some(row) = res.rows.first() {
-            let status_str = match row.first() {
-                Some(DataValue::Str(s)) => s.as_str(),
-                _ => "Idle",
-            };
-            let depth = match row.get(1) {
-                Some(DataValue::Num(n)) => {
-                    let s = format!("{:?}", n);
-                    s.parse::<usize>().unwrap_or(0)
+            let (status_str, depth) = match (row.first(), row.get(1)) {
+                (Some(DataValue::Str(s)), Some(DataValue::Num(n))) => {
+                    let d_str = format!("{:?}", n);
+                    (s.as_str(), d_str.parse::<usize>().unwrap_or(0))
                 }
-                _ => 0,
+                _ => ("Idle", 0),
+            };
+            let last_action_result = match row.get(3) {
+                Some(DataValue::Json(j)) => {
+                    if j.0.is_null() { None } else { Some(j.0.clone()) }
+                }
+                _ => None,
             };
             let status = match status_str {
                 "Thinking" => crate::core::session::SessionStatus::Thinking,
@@ -570,16 +517,30 @@ impl Memory {
                 _ => crate::core::session::SessionStatus::Idle,
             };
 
-            // Fetch messages
-            let msg_script = "?[content] := *session_messages{session_id: $id, msg_index, content} :sort msg_index";
+            let msg_script = "?[msg_index, content] := *session_messages{session_id: $id, msg_index, content} :sort msg_index";
             let mut msg_params = BTreeMap::new();
             msg_params.insert("id".to_string(), DataValue::from(id.to_string()));
             let msg_res = self.backend.run_script(msg_script, msg_params, ScriptMutability::Immutable)?;
             
             let mut messages = Vec::new();
             for m_row in msg_res.rows {
-                if let Some(DataValue::Str(c)) = m_row.first() {
+                if let Some(DataValue::Str(c)) = m_row.get(1) {
                     messages.push(c.to_string());
+                }
+            }
+
+            // Get Snapshots (Atomic Resilience Phase 8)
+            let snap_script = "?[snapshot_index, history] := *session_snapshots{session_id: $id, snapshot_index, history} :sort snapshot_index";
+            let mut snap_params = BTreeMap::new();
+            snap_params.insert("id".to_string(), DataValue::from(id.to_string()));
+            let snap_res = self.backend.run_script(snap_script, snap_params, ScriptMutability::Immutable)?;
+            
+            let mut snapshots = Vec::new();
+            for s_row in snap_res.rows {
+                if let Some(DataValue::Json(h)) = s_row.get(1) {
+                    if let Ok(history) = serde_json::from_value::<Vec<String>>(h.0.clone()) {
+                        snapshots.push(history);
+                    }
                 }
             }
 
@@ -588,10 +549,44 @@ impl Memory {
                 messages,
                 depth,
                 status,
+                snapshots,
+                last_action_result,
             }))
         } else {
             Ok(None)
         }
+    }
+
+    pub async fn get_active_session_id(&self) -> Result<Option<String>> {
+        let script = "?[id] := *sessions{id, status}, status = 'Thinking' :limit 1";
+        let res = self.backend.run_script(script, Default::default(), ScriptMutability::Immutable)?;
+        if let Some(row) = res.rows.first() {
+            if let Some(DataValue::Str(id)) = row.first() {
+                return Ok(Some(id.to_string()));
+            }
+        }
+        
+        // If none is 'Thinking', check for 'AwaitingObservation' or 'PendingCommit'
+        let script_alt = "?[id] := *sessions{id, status}, (status = 'AwaitingObservation' or status = 'PendingCommit') :sort id desc :limit 1";
+        let res_alt = self.backend.run_script(script_alt, Default::default(), ScriptMutability::Immutable)?;
+        if let Some(row) = res_alt.rows.first() {
+            if let Some(DataValue::Str(id)) = row.first() {
+                return Ok(Some(id.to_string()));
+            }
+        }
+
+        Ok(None)
+    }
+
+    pub async fn get_latest_session_id(&self) -> Result<Option<String>> {
+        let script = "?[id] := *sessions{id, created_at} :sort created_at desc :limit 1";
+        let res = self.backend.run_script(script, Default::default(), ScriptMutability::Immutable)?;
+        if let Some(row) = res.rows.first() {
+            if let Some(DataValue::Str(id)) = row.first() {
+                return Ok(Some(id.to_string()));
+            }
+        }
+        Ok(None)
     }
 }
 
@@ -619,29 +614,101 @@ impl MemoryStore for Memory {
     }
 
     async fn count_nodes(&self) -> Result<usize> {
-        let script = "?[count] := *nodes{id}, count = count(id)";
+        let script = "?[id] := *nodes{id}";
         let res = self.backend.run_script(script, Default::default(), ScriptMutability::Immutable)?;
+        Ok(res.rows.len())
+    }
+
+    async fn register_skill(&self, _name: &str, _code: &str, _desc: &str, _signature: &str) -> Result<()> {
+        Ok(())
+    }
+
+    async fn get_skill(&self, _name: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+
+    async fn setup_memory(name: &str) -> (Memory, PathBuf) {
+        let temp_dir = std::env::temp_dir().join(format!("sly_mem_test_{}_v3", name));
+        if temp_dir.exists() { let _ = fs::remove_dir_all(&temp_dir); }
+        fs::create_dir_all(&temp_dir).unwrap();
         
-        if let Some(row) = res.rows.first() {
-             // Handle Cozo Num (can be f64 or similar)
-            match row.first() {
-                Some(DataValue::Num(n)) => {
-                     // Check if it has a sensible integer representation or string
-                     let s = format!("{:?}", n);
-                     Ok(s.parse::<f64>().unwrap_or(0.0) as usize)
-                },
-                _ => Ok(0),
-            }
-        } else {
-            Ok(0)
-        }
+        let path = temp_dir.join("cozo").to_string_lossy().to_string();
+        let mem = Memory::new(&path, false).await.expect("Failed to create memory");
+        (mem, temp_dir)
     }
 
-    async fn register_skill(&self, name: &str, code: &str, desc: &str, signature: &str) -> Result<()> {
-        self.register_skill(name, code, desc, signature).await
+    #[tokio::test]
+    async fn test_memory_record_event() -> Result<()> {
+        let (mem, _tmp) = setup_memory("record_event").await;
+        mem.record_event("test_op", serde_json::json!({"key": "value"}))?;
+        Ok(())
     }
 
-    async fn get_skill(&self, name: &str) -> Result<Option<String>> {
-        self.get_skill(name).await
+    #[tokio::test]
+    async fn test_memory_add_node() -> Result<()> {
+        let (mem, _tmp) = setup_memory("add_node").await;
+        let node = GraphNode {
+            id: "test:1".to_string(),
+            content: "Some content".to_string(),
+            signature: "sig".to_string(),
+            node_type: "test".to_string(),
+            path: "test.rs".to_string(),
+            edges: vec![],
+        };
+        mem.add_node(&node).await?;
+        
+        let count = mem.count_nodes().await?;
+        assert_eq!(count, 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_memory_session() -> Result<()> {
+        let (mem, _tmp) = setup_memory("session").await;
+        let session = crate::core::session::AgentSession {
+            id: "sess_1".to_string(),
+            messages: vec!["Hello".to_string()],
+            depth: 1,
+            status: crate::core::session::SessionStatus::Idle,
+            snapshots: vec![],
+        };
+        
+        mem.create_session(&session).await?;
+        let loaded = mem.get_session("sess_1").await?;
+        assert!(loaded.is_some());
+        let loaded_val = loaded.unwrap();
+        assert_eq!(loaded_val.id, "sess_1");
+        assert_eq!(loaded_val.messages[0], "Hello");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_technical_heuristics() -> Result<()> {
+        let (mem, _tmp) = setup_memory("heuristics").await;
+        let h = TechnicalHeuristic {
+            id: "h1".to_string(),
+            context: "rust, auth, jwt".to_string(),
+            solution: "Use jsonwebtoken with HS256".to_string(),
+            success_weight: 1.0,
+        };
+        
+        mem.persist_technical_heuristic(&h).await?;
+        
+        let recalled = mem.recall_technical_heuristics("auth", 5).await?;
+        assert_eq!(recalled.len(), 1);
+        assert_eq!(recalled[0].id, "h1");
+        assert_eq!(recalled[0].solution, "Use jsonwebtoken with HS256");
+        
+        let none = mem.recall_technical_heuristics("javascript", 5).await?;
+        assert_eq!(none.len(), 0);
+        
+        Ok(())
     }
 }

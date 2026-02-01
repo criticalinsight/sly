@@ -29,6 +29,7 @@ Sly can be managed remotely via Telegram. This is ideal for background tasks or 
 - `/stop`: Kill the current agent session.
 - `/status`: Get health metrics and interactive buttons.
 - `/logs`: Stream the last 20 lines of the system log.
+- `/graph <node_id> [depth]`: Visualize the Datalog knowledge graph neighborhood for a specific symbol or file.
 - `/query <datalog>`: Run advanced graph queries directly against the agent's memory.
 - `/help`: Show command reference.
 
@@ -43,11 +44,13 @@ The `/status` command now returns an interactive keyboard for one-tap operations
 When Sly proposes an implementation plan, you will receive it in Telegram with **[✅ Approve]** and **[❌ Reject]** buttons. Approving a plan signals the agent to begin execution immediately.
 
 ### Haptic Telemetry & Semantic Batching
-The Supervisor will automatically push **Facts** to Telegram as they happen:
-- ⚙️ **Tool Executions**: Real-time log of what files are being touched.
-- 👁️ **Directives**: The agent's next planned steps.
-- 🚨 **Errors**: Immediate alerts for OOM or runtime panics.
-- 📊 **Batching**: Similar facts (e.g., repeating errors) are condensed into a single "xN" summary to prevent message flooding.
+The Supervisor provides multi-modal telemetry to keep you informed in real-time:
+- **Telegram Facts**:condensed summaries of tool executions, directives, and errors.
+- **Auditory Haptics (macOS)**: Native system sounds for eyes-free monitoring:
+    - 💎 **Glass**: Successful Overlay Commit.
+    - 🔔 **Tink**: Predictive Pulse (Proactive Insight) dispatched.
+    - 📉 **Basso**: Action failure or commit error.
+- **Predictive Pulse**: During idle periods, Sly performs background analysis and sends **Proactive Insights** (e.g., "I see you're refactoring <code>auth.rs</code>. Should I pre-index the current documentation?") via Telegram every 5 minutes.
 
 ## 5. Operational Hardening
 ### Circuit Breaker

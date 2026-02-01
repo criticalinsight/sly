@@ -1,13 +1,12 @@
 use std::sync::Arc;
-// use tokio::sync::RwLock;
 use crate::memory::MemoryStore;
 use crate::safety::OverlayFS;
 use super::cortex::Cortex;
+use crate::error::{Result, SlyError};
 use std::collections::HashMap;
-
-
 use serde::{Deserialize, Serialize};
 use colored::Colorize;
+use crate::mcp::registry::McpToolMetadata;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "lowercase")]
@@ -45,7 +44,7 @@ impl SlyConfig {
         if path.exists() {
             match std::fs::read_to_string(path) {
                 Ok(content) => {
-                    match toml::from_str(&content) {
+                    match Self::from_str(&content) {
                         Ok(config) => return config,
                         Err(e) => eprintln!("{} Failed to parse config.toml: {}", "⚠️".red(), e),
                     }
@@ -54,6 +53,10 @@ impl SlyConfig {
             }
         }
         Self::default()
+    }
+
+    pub fn from_str(content: &str) -> Result<Self> {
+        toml::from_str(content).map_err(|e| SlyError::Task(format!("Config parse error: {}", e)))
     }
 }
 
@@ -72,8 +75,6 @@ impl Default for SlyConfig {
     }
 }
 
-// use super::session::SessionStore; // Removed Phase 5
-
 #[derive(Clone)]
 pub struct GlobalState {
     pub config: Arc<SlyConfig>,
@@ -81,8 +82,9 @@ pub struct GlobalState {
     pub memory_raw: Arc<crate::memory::Memory>,
     pub overlay: Arc<OverlayFS>,
     pub cortex: Arc<Cortex>,
-    pub bus: Arc<crate::core::bus::DirectiveBus>,
     pub mcp_clients: Arc<tokio::sync::Mutex<HashMap<String, Arc<crate::mcp::client::McpClient>>>>,
+    pub metadata_cache: Arc<tokio::sync::Mutex<Vec<McpToolMetadata>>>,
+    pub telegram: Option<Arc<tokio::sync::Mutex<crate::io::telegram::TelegramClient>>>,
 }
 
 impl GlobalState {
@@ -92,6 +94,7 @@ impl GlobalState {
         memory_raw: Arc<crate::memory::Memory>,
         overlay: Arc<OverlayFS>,
         cortex: Arc<Cortex>,
+        telegram: Option<Arc<tokio::sync::Mutex<crate::io::telegram::TelegramClient>>>,
     ) -> Self {
         Self {
             config: Arc::new(config),
@@ -99,11 +102,43 @@ impl GlobalState {
             memory_raw,
             overlay,
             cortex,
-            bus: Arc::new(crate::core::bus::DirectiveBus::new()),
             mcp_clients: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            metadata_cache: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            telegram,
         }
     }
 
-    // MCP Logic moved to crate::mcp::registry
+    pub async fn new_transient() -> Result<Self> {
+        let config = SlyConfig::default();
+        let memory_raw = Arc::new(crate::memory::Memory::new_transient().await?);
+        let overlay = Arc::new(OverlayFS::new(&std::env::current_dir().map_err(|e| SlyError::Io(e))?, "transient")?);
+        let cortex = Arc::new(Cortex::new(config.clone(), "rust".to_string())?);
+        Ok(Self::new(config, memory_raw.clone() as Arc<dyn MemoryStore>, memory_raw, overlay, cortex, None))
+    }
+
+    #[cfg(test)]
+    pub async fn new_for_tests(path: &str) -> Result<Self> {
+        if std::env::var("GEMINI_API_KEY").is_err() {
+            std::env::set_var("GEMINI_API_KEY", "test-key");
+        }
+        let config = SlyConfig::default();
+        let memory_raw = Arc::new(crate::memory::Memory::new_light(path, false).await?);
+        let overlay = Arc::new(OverlayFS::new(std::path::Path::new(path), "test-overlay").map_err(|e| SlyError::Overlay(e.to_string()))?);
+        let cortex = Arc::new(Cortex::new(config.clone(), "rust".to_string())?);
+        Ok(Self::new(config, memory_raw.clone() as Arc<dyn MemoryStore>, memory_raw, overlay, cortex, None))
+    }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_default() {
+        let config = SlyConfig::default();
+        assert_eq!(config.project_name, "sly");
+        assert_eq!(config.primary_model, "gemini-3-flash");
+        assert!(config.autonomous_mode);
+        assert_eq!(config.role, SlyRole::Executor);
+    }
+}

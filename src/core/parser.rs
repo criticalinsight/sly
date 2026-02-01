@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::error::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -11,11 +11,16 @@ pub enum AgentAction {
 
     CommitOverlay { message: String },
     CallTool { tool_name: String, arguments: Value },
-    UseSkill { name: String, args: Vec<i32> },
-    QueryDatalog { script: String },
+    ViewGraph { node_id: String, depth: usize },
+    
+    /// Expand a symbolic reference to full implementation
+    /// Use when detailed implementation context is needed
+    Expand { path: String, symbol: Option<String> },
+    
     // Fallback for straight text or analysis
     Answer { text: String },
 }
+
 
 pub fn parse_action(response: &str) -> Result<Vec<AgentAction>> {
     let mut actions = Vec::new();
@@ -133,6 +138,116 @@ Sure, here is the file:
                 assert_eq!(arguments["path"], ".");
             },
             _ => panic!("Wrong type"),
+        }
+    }
+
+    #[test]
+    fn test_parse_multiple_actions() {
+        let resp = r#"
+Here are two actions:
+```json
+[
+  {
+    "directive": "WriteFile",
+    "path": "test.txt",
+    "content": "hello"
+  },
+  {
+    "directive": "ExecShell",
+    "command": "ls",
+    "context": "testing"
+  }
+]
+```
+        "#;
+        let actions = parse_action(resp).unwrap();
+        assert_eq!(actions.len(), 2);
+        if let AgentAction::WriteFile { path, .. } = &actions[0] {
+            assert_eq!(path, "test.txt");
+        } else {
+            panic!("First action should be WriteFile");
+        }
+        if let AgentAction::ExecShell { command, .. } = &actions[1] {
+            assert_eq!(command, "ls");
+        } else {
+            panic!("Second action should be ExecShell");
+        }
+    }
+
+    #[test]
+    fn test_parse_multiple_blocks() {
+        let resp = r#"
+First block:
+```json
+{
+  "directive": "Answer",
+  "text": "Hello"
+}
+```
+Second block:
+```json
+{
+  "directive": "CommitOverlay",
+  "message": "fix: bug"
+}
+```
+        "#;
+        let actions = parse_action(resp).unwrap();
+        assert_eq!(actions.len(), 2);
+        match (&actions[0], &actions[1]) {
+            (AgentAction::Answer { .. }, AgentAction::CommitOverlay { .. }) => {},
+            _ => panic!("Wrong actions: {:?}", actions),
+        }
+    }
+
+    #[test]
+    fn test_parse_plain_text_fallback() {
+        let resp = "This is just some text, not JSON.";
+        let actions = parse_action(resp).unwrap();
+        assert_eq!(actions.len(), 1);
+        if let AgentAction::Answer { text } = &actions[0] {
+            assert_eq!(text, resp);
+        } else {
+            panic!("Should fallback to Answer");
+        }
+    }
+
+    #[test]
+    fn test_parse_expand_directive() {
+        let resp = r#"```json
+{
+  "directive": "Expand",
+  "path": "src/auth.rs",
+  "symbol": "fn:login"
+}
+```"#;
+        let actions = parse_action(resp).unwrap();
+        assert_eq!(actions.len(), 1);
+        match &actions[0] {
+            AgentAction::Expand { path, symbol } => {
+                assert_eq!(path, "src/auth.rs");
+                assert_eq!(symbol, &Some("fn:login".to_string()));
+            },
+            _ => panic!("Should parse as Expand"),
+        }
+    }
+
+    #[test]
+    fn test_parse_expand_without_symbol() {
+        let resp = r#"```json
+{
+  "directive": "Expand",
+  "path": "src/models.rs"
+}
+```"#;
+        let actions = parse_action(resp).unwrap();
+        assert_eq!(actions.len(), 1);
+        match &actions[0] {
+            AgentAction::Expand { path, symbol } => {
+                assert_eq!(path, "src/models.rs");
+                assert!(symbol.is_none());
+            },
+            _ => panic!("Should parse as Expand"),
         }
     }
 }

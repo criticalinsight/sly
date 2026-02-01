@@ -1,6 +1,5 @@
-use anyhow::{anyhow, Context, Result};
-use cozo::{DataValue, DbInstance, ScriptMutability, Vector};
-use ndarray::Array1;
+use crate::error::{Result, SlyError};
+use cozo::{DataValue, DbInstance, ScriptMutability};
 use std::collections::BTreeMap;
 use std::path::Path;
 use uuid::Uuid;
@@ -12,30 +11,40 @@ pub struct CozoBackend {
 
 impl CozoBackend {
     pub fn new(path: &str, read_only: bool) -> Result<Self> {
-        let db_path = Path::new(path).join("cozo.db");
-        let db_path_str = db_path.to_str().context("Invalid UTF-8 in database path")?;
+        let is_ephemeral = path == ":memory:";
         
+        let (engine, path_owned) = if is_ephemeral {
+            ("mem", String::new())
+        } else {
+            let db_path = Path::new(path).join("cozo.db");
+            ("rocksdb", db_path.to_str().ok_or_else(|| SlyError::Database("Invalid UTF-8 in database path".to_string()))?.to_string())
+        };
+        let path_str = path_owned.as_str();
+
         let mut retries = 0;
-        let max_retries = 10;
+        let max_retries = if is_ephemeral { 0 } else { 10 };
+        
         let db = loop {
-            let options = if read_only {
-                r#"{"read_only": true}"#
+            let options = if is_ephemeral {
+                r#"{}"#
+            } else if read_only {
+                r#"{"read_only": true, "WAL": true}"#
             } else {
-                "{}"
+                r#"{"WAL": true}"#
             };
 
-            match DbInstance::new("rocksdb", db_path_str, options) {
+            match DbInstance::new(engine, path_str, options) {
                 Ok(db) => break db,
-                Err(e) if !read_only && retries < max_retries && e.to_string().contains("Resource temporarily unavailable") => {
+                Err(e) if !is_ephemeral && !read_only && retries < max_retries && e.to_string().contains("Resource temporarily unavailable") => {
                     retries += 1;
                     eprintln!("⚠️ Database is locked. Retry {}/{}...", retries, max_retries);
                     std::thread::sleep(std::time::Duration::from_millis(1000));
                 }
-                Err(e) if read_only && retries < max_retries && e.to_string().contains("Resource temporarily unavailable") => {
+                Err(e) if !is_ephemeral && read_only && retries < max_retries && e.to_string().contains("Resource temporarily unavailable") => {
                     retries += 1;
                     std::thread::sleep(std::time::Duration::from_millis(200));
                 }
-                Err(e) => return Err(anyhow!("Failed to open CozoDB at {}: {}", db_path_str, e)),
+                Err(e) => return Err(SlyError::Database(format!("Failed to open CozoDB: {}", e))),
             }
         };
 
@@ -47,92 +56,18 @@ impl CozoBackend {
     }
 
     fn initialize_schema(&self) -> Result<()> {
-        // Initialize Schema
-        let create_cache = "
-            :create cache {
-                id: String
-                =>
-                query: String,
-                response: String,
-                embedding: <F32; 384>
-            }
-        ";
-        self.run_schema_script(create_cache, "cache")?;
-
-        let create_index = "
-            ::hnsw create cache:idx {
-                dim: 384,
-                dtype: F32,
-                fields: [embedding],
-                distance: Cosine,
-                m: 50,
-                ef_construction: 200
-            }
-        ";
-        self.run_schema_script(create_index, "cache:idx")?;
-
-        // Updated Schema for Active RAG: includes embedding in nodes
+        // Initialize Schema (Vector-less)
         let create_nodes = "
             :create nodes {
                 id: String
                 =>
                 content: String,
+                signature: String,
                 type: String,
-                path: String,
-                embedding: <F32; 384>
+                path: String
             }
         ";
         self.run_schema_script(create_nodes, "nodes")?;
-
-        // Schema Migration: Check if `nodes` has `embedding` column
-        let check_schema = "?[id, embedding] := *nodes{id, embedding} :limit 1";
-        if let Err(_) = self.db.run_script(check_schema, Default::default(), ScriptMutability::Immutable) {
-            println!("Migrating `nodes` schema: Adding `embedding` column...");
-            
-            // 0. Cleanup partial state
-            let _ = self.db.run_script("::remove nodes_old", Default::default(), ScriptMutability::Mutable);
-
-            // 1. Rename old table (backup)
-            if let Err(e) = self.db.run_script("::rename nodes nodes_old", Default::default(), ScriptMutability::Mutable) {
-                eprintln!("Failed to rename nodes->nodes_old: {}", e);
-            }
-            
-            // 1.5 Explicit remove
-            let _ = self.db.run_script("::remove nodes", Default::default(), ScriptMutability::Mutable);
-
-            // 2. Create new table
-            if let Err(e) = self.db.run_script(create_nodes, Default::default(), ScriptMutability::Mutable) {
-                eprintln!("Failed to recreate nodes table: {}", e);
-            }
-            
-            // 3. Migrate data
-            let migrate_data = "
-                ?[id, content, type, path, embedding] := *nodes_old{id, content, type, path}, embedding = $empty_vec
-                :put nodes { id => content, type, path, embedding }
-            ";
-            let mut params = BTreeMap::new();
-            params.insert("empty_vec".to_string(), vec_to_datavalue(vec![0.0; 384]));
-
-            if let Err(e) = self.db.run_script(migrate_data, params, ScriptMutability::Mutable) {
-                eprintln!("Failed to migrate nodes data: {}", e);
-            }
-            
-            // 4. Drop old table
-            let _ = self.db.run_script("::remove nodes_old", Default::default(), ScriptMutability::Mutable);
-            println!("`nodes` verification/migration complete.");
-        }
-
-        let create_nodes_idx = "
-            ::hnsw create nodes:idx {
-                dim: 384,
-                dtype: F32,
-                fields: [embedding],
-                distance: Cosine,
-                m: 50,
-                ef_construction: 200
-            }
-        ";
-        self.run_schema_script(create_nodes_idx, "nodes:idx")?;
 
         let create_edges = "
             :create edges {
@@ -144,7 +79,6 @@ impl CozoBackend {
         ";
         self.run_schema_script(create_edges, "edges")?;
 
-        // Initialize Library Table for Docs
         let create_library = "
             :create library {
                 id: String
@@ -153,44 +87,10 @@ impl CozoBackend {
                 version: String,
                 content: String,
                 language: String,
-                chunk_type: String,
-                embedding: <F32; 384>
+                chunk_type: String
             }
         ";
         self.run_schema_script(create_library, "library")?;
-
-        // Schema Migration: Check if `library` has `embedding` column
-        let check_lib_schema = "?[id, embedding] := *library{id, embedding} :limit 1";
-        if let Err(_) = self.db.run_script(check_lib_schema, Default::default(), ScriptMutability::Immutable) {
-            println!("Migrating `library` schema: Adding `embedding` column...");
-            
-            let _ = self.db.run_script("::remove library_old", Default::default(), ScriptMutability::Mutable);
-            
-            if let Err(e) = self.db.run_script("::rename library library_old", Default::default(), ScriptMutability::Mutable) {
-                eprintln!("Failed to rename library->library_old: {}", e);
-            }
-
-            let _ = self.db.run_script("::remove library", Default::default(), ScriptMutability::Mutable);
-            
-            if let Err(e) = self.db.run_script(create_library, Default::default(), ScriptMutability::Mutable) {
-                eprintln!("Failed to recreate library table: {}", e);
-            }
-            
-            // Migrate data
-            let migrate_lib_data = "
-                ?[id, name, version, content, language, chunk_type, embedding] := *library_old{id, name, version, content, language, chunk_type}, embedding = $empty_vec
-                :put library { id => name, version, content, language, chunk_type, embedding }
-            ";
-            let mut params = BTreeMap::new();
-            params.insert("empty_vec".to_string(), vec_to_datavalue(vec![0.0; 384]));
-
-            if let Err(e) = self.db.run_script(migrate_lib_data, params, ScriptMutability::Mutable) {
-                eprintln!("Failed to migrate library data: {}", e);
-            }
-            
-            let _ = self.db.run_script("::remove library_old", Default::default(), ScriptMutability::Mutable);
-            println!("`library` verification/migration complete.");
-        }
 
         let create_kv = "
             :create kv_cache {
@@ -206,11 +106,10 @@ impl CozoBackend {
             :create sync_log {
                 path: String
                 =>
-                last_ingested: Float,
+                last_ingested: Int,
                 content_hash: String
             }
         ";
-        // Initialize sync_log table
         self.run_schema_script(create_sync, "sync_log")?;
 
         let create_event_log = "
@@ -220,33 +119,11 @@ impl CozoBackend {
                 op: String,
                 data: Json,
                 timestamp: Int,
-                version: Int
-            }
-        ";
-        self.run_schema_script(create_event_log, "event_log")?;
-
-        let create_skills = "
-            :create skills {
-                name: String
-                =>
-                code: String,
-                description: String,
+                version: Int,
                 signature: String
             }
         ";
-        self.run_schema_script(create_skills, "skills")?;
-
-        let create_lib_index = "
-            ::hnsw create library:idx {
-                dim: 384,
-                dtype: F32,
-                fields: [embedding],
-                distance: Cosine,
-                m: 50,
-                ef_construction: 200
-            }
-        ";
-        self.run_schema_script(create_lib_index, "library:idx")?;
+        self.run_schema_script(create_event_log, "event_log")?;
 
         let create_sessions = "
             :create sessions {
@@ -255,6 +132,7 @@ impl CozoBackend {
                 status: String,
                 depth: Int,
                 input: String,
+                last_result: Json,
                 created_at: Int
             }
         ";
@@ -270,14 +148,33 @@ impl CozoBackend {
         ";
         self.run_schema_script(create_messages, "session_messages")?;
 
+        let create_snapshots = "
+            :create session_snapshots {
+                session_id: String,
+                snapshot_index: Int
+                =>
+                history: Json
+            }
+        ";
+        self.run_schema_script(create_snapshots, "session_snapshots")?;
+
         Ok(())
     }
 
     fn run_schema_script(&self, script: &str, name: &str) -> Result<()> {
         if let Err(e) = self.db.run_script(script, Default::default(), ScriptMutability::Mutable) {
             let msg = e.to_string();
-            if !msg.contains("conflicts with an existing one") && !msg.contains("already exists") && !msg.contains("non-existent field") {
-                eprintln!("Database initialization error ({}): {}", name, e);
+            // Ignore already exists or field conflicts (handled by pure decommissioning)
+            if !msg.contains("conflicts with an existing one") && !msg.contains("already exists") {
+                // If it contains non-existent field, it means the table exists but has a different schema.
+                // In DECOMMISSION mode, we just remove and recreate. 
+                if msg.contains("non-existent field") || msg.contains("mismatch") {
+                   let remove_script = format!("::remove {}", name);
+                   let _ = self.db.run_script(&remove_script, Default::default(), ScriptMutability::Mutable);
+                   let _ = self.db.run_script(script, Default::default(), ScriptMutability::Mutable);
+                } else {
+                    eprintln!("Database initialization error ({}): {}", name, e);
+                }
             }
         }
         Ok(())
@@ -285,32 +182,64 @@ impl CozoBackend {
 
     pub fn run_script(&self, script: &str, params: BTreeMap<String, DataValue>, mutability: ScriptMutability) -> Result<cozo::NamedRows> {
         self.db.run_script(script, params, mutability)
-            .map_err(|e| anyhow!("CozoDB Error: {}", e))
+            .map_err(|e| SlyError::Database(format!("CozoDB Error: {}", e)))
     }
 
-    /// Records an atomic fact (Event) in the immutable log.
-    /// This is the 'Hickey Solution' to decoupled state.
     pub fn record_event(&self, op: &str, data: serde_json::Value) -> Result<()> {
+        use sha2::{Sha256, Digest};
+        
+        let id = Uuid::new_v4().to_string();
+        let timestamp = Utc::now().timestamp_millis();
+        let version = 1;
+
+        // Create canonical string for signing
+        let payload = format!("{}:{}:{}:{}", id, op, data, timestamp);
+        let mut hasher = Sha256::new();
+        hasher.update(payload.as_bytes());
+        let signature = hex::encode(hasher.finalize());
+
         let script = "
-            ?[id, op, data, timestamp, version] <- [[$id, $op, $data, $timestamp, $version]]
-            :put event_log { id => op, data, timestamp, version }
+            ?[id, op, data, timestamp, version, signature] <- [[$id, $op, $data, $timestamp, $version, $signature]]
+            :put event_log { id => op, data, timestamp, version, signature }
         ";
         let mut params = BTreeMap::new();
-        params.insert("id".to_string(), DataValue::from(Uuid::new_v4().to_string()));
+        params.insert("id".to_string(), DataValue::from(id));
         params.insert("op".to_string(), DataValue::from(op));
-        
-        // Correct construction for Cozo JSON
         params.insert("data".to_string(), DataValue::from(data));
-        
-        params.insert("timestamp".to_string(), DataValue::from(Utc::now().timestamp_millis()));
-        params.insert("version".to_string(), DataValue::from(1));
+        params.insert("timestamp".to_string(), DataValue::from(timestamp));
+        params.insert("version".to_string(), DataValue::from(version));
+        params.insert("signature".to_string(), DataValue::from(signature));
 
         self.run_script(script, params, ScriptMutability::Mutable)?;
         Ok(())
     }
 }
 
-// Convert Rust Vec<f32> to Cozo DataValue::Vec
-pub fn vec_to_datavalue(v: Vec<f32>) -> DataValue {
-    DataValue::Vec(Vector::F32(Array1::from_vec(v)))
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_event_signing() -> Result<()> {
+        let temp_dir = std::env::temp_dir().join("sly_test_signing");
+        if temp_dir.exists() { let _ = std::fs::remove_dir_all(&temp_dir); }
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        
+        let path = temp_dir.to_str().unwrap();
+        let backend = CozoBackend::new(path, false)?;
+        
+        backend.record_event("test_op", json!({"key": "value"}))?;
+        
+        // Correct Cozo query syntax: explicit field names for all fields
+        let res = backend.db.run_script("?[id, op, sig] := *event_log{id, op, data, timestamp, version, signature: sig}", Default::default(), ScriptMutability::Immutable).unwrap();
+        assert_eq!(res.rows.len(), 1);
+        let sig = res.rows[0][2].clone();
+        assert!(matches!(sig, cozo::DataValue::Str(_)));
+        if let cozo::DataValue::Str(s) = sig {
+            assert_eq!(s.len(), 64); // SHA-256 hex length
+        }
+        
+        Ok(())
+    }
 }

@@ -1,8 +1,7 @@
 use crate::core::state::SlyConfig;
-use crate::debate::{Debate, DebateSynthesis};
-use crate::lint::{LintViolation, SemanticLinter};
-use anyhow::{anyhow, Context, Result};
+use crate::error::{Result, SlyError};
 use colored::*;
+use serde::{Serialize, Deserialize};
 use serde_json::{json, Value};
 use std::env;
 
@@ -10,8 +9,8 @@ pub const SYSTEM_PROMPT: &str = r#"You are Sly v2.1, a high-velocity, event-driv
 
 ## CORE ARCHITECTURE & IDENTITY
 * **Brain:** Gemini 3.0 Flash-Preview (Primary) and Gemini 2.5 Flash (Fallback).
-* **Nervous System (Cortex):** You operate on a non-blocking `tokio::select!` event bus. You process high-priority User Impulses immediately while delegating low-priority tasks (Indexing, Scraping) to background E-Cores.
-* **Hippocampus (Active Memory):** You utilize a Graph-Guided Vector Store (CozoDB) with Metal-accelerated embeddings. You prefer "Neighborhood Search" over brute-force similarity.
+* **Nervous System (Cortex):** You operate on a non-blocking `tokio::select!` event bus. You process high-priority User Impulses immediately.
+* **Hippocampus (Active Memory):** You utilize a Graph-Guided Datalog Store (CozoDB) for structural context and symbol lookup.
 * **Safety Shield (OverlayFS):** ALL file modifications are "Speculative." You write to a virtual Copy-on-Write overlay (`.sly/overlay`). You never modify the real filesystem until a `Commit` action is authorized after verification.
 
 ## OPERATIONAL DIRECTIVES
@@ -30,7 +29,7 @@ pub const SYSTEM_PROMPT: &str = r#"You are Sly v2.1, a high-velocity, event-driv
 * **Self-Correction:** If the Sentinel (Compiler/Verifier) rejects your overlay, you must immediately trigger a "Reflexion" loop to fix the error.
 
 ### 3. Context & Memory
-* **Active RAG:** Assume the `GraphBuilder` has already indexed the workspace. If you need to know "Who calls `Auth::login`?", query the graph edges, don't grep the text.
+* **Active RAG:** Assume the `GraphBuilder` has already indexed the workspace. If you need to know "Who calls `Auth::login`?", query the graph edges or search for keywords in the nodes.
 // * **Knowledge Engine:** If you encounter unknown dependencies, assume the functional scanner has scraped their docs. Request specific library definitions if missing.
 
 ## TOOL INTERFACE (JSON-RPC)
@@ -59,47 +58,21 @@ You communicate exclusively via structured JSON directives.
 ```json
 {
   "directive": "QueryMemory",
-  "query": "Find all structs implementing UserTrait",
+  "query": "Find all structs with type 'heuristic'",
   "strategy": "GraphExpand"
 }
 ```
 
-**4. Advanced Logic (Datalog)**
-Use this for structural graph queries. **TABLE: `nodes { id => content, type, path, embedding }`**
+**4. Visual Graph Observability**
 ```json
 {
-  "directive": "QueryDatalog",
-  "script": "?[id, type] := *nodes{id, type}, type == 'struct'"
+  "directive": "ViewGraph",
+  "node_id": "src/main.rs",
+  "depth": 2
 }
 ```
 
-### DATALOG CHEAT SHEET (CozoDB)
-* **Find all of type:** `?[id] := *nodes{id, type}, type == 'fn'`
-* **Find by Path:** `?[id] := *nodes{id, path}, path == 'src/main.rs'`
-* **Compound Query:** `?[id, type] := *nodes{id, type, content}, type == 'fn', content.contains('async')`
-* **Count:** `?[count] := *nodes{id}, count = count(id)`
-
-**5. Native Skills (WASM)**
-Execute pure logic stored in the `skills` table.
-To find skills: `?[n, d, s] := *skills{name: n, description: d, signature: s}`
-```json
-{
-  "directive": "UseSkill",
-  "name": "sly_sum",
-  "args": [10, 20]
-}
-```
-
-**6. Swarm Delegation (Concurrency)**
-```json
-{
-  "directive": "SpawnWorker",
-  "role": "Tester", // 'Coder', 'Auditor'
-  "task": "Write unit tests for the new LoginHandler"
-}
-```
-
-**6. Final Commitment**
+**5. Final Commitment**
 ```json
 {
   "directive": "CommitOverlay",
@@ -112,7 +85,7 @@ To find skills: `?[n, d, s] := *skills{name: n, description: d, signature: s}`
 1. **Be Proactive:** If `notify` detects a file change, acknowledge it ("I see you modified `routes.rs`...").
 2. **Be Pessimistic:** Assume your first draft has bugs. Always write a test case *with* the implementation.
 3. **Be Efficient:** Do not output 500 lines of unchanged code. Use `// ... existing code ...` heavily.
-4. **Hardware Aware:** If a task is heavy (e.g., "Refactor the entire module"), explicitly suggest: "I will spawn a background Swarm task for this to keep the main loop responsive."
+4. **Efficiency Matters:** Do not output 500 lines of unchanged code. Use `// ... existing code ...` heavily.
 
 ## CURRENT STATE
 
@@ -124,6 +97,7 @@ To find skills: `?[n, d, s] := *skills{name: n, description: d, signature: s}`
 Awaiting Impulse...
 "#;
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum ThinkingLevel {
     Low,
     High,
@@ -132,14 +106,6 @@ pub enum ThinkingLevel {
 }
 
 impl ThinkingLevel {
-    fn as_str(&self) -> Option<&str> {
-        match self {
-            ThinkingLevel::Low => Some("low"),
-            ThinkingLevel::High => Some("high"),
-            ThinkingLevel::Minimal => Some("minimal"),
-            ThinkingLevel::Automatic => None,
-        }
-    }
 }
 
 pub struct Cortex {
@@ -154,7 +120,7 @@ pub struct Cortex {
 impl Cortex {
     pub fn new(config: SlyConfig, tech_stack: String) -> Result<Self> {
         let api_key = env::var("GEMINI_API_KEY")
-            .context("CRITICAL: GEMINI_API_KEY not found in .env or environment")?;
+            .map_err(|_| SlyError::Cortex("CRITICAL: GEMINI_API_KEY not found in .env or environment".to_string()))?;
 
         Ok(Self {
             api_key,
@@ -190,183 +156,96 @@ impl Cortex {
         let status = res.status();
         if !status.is_success() {
             let err_text = res.text().await.unwrap_or_default();
-            return Err(anyhow!("Failed to create cache: {} - {}", status, err_text));
+            return Err(SlyError::Cortex(format!("Failed to create cache: {} - {}", status, err_text)));
         }
 
         let val: Value = res.json().await?;
         let cache_id = val["name"]
             .as_str()
-            .context("Cache ID not found in response")?
+            .ok_or_else(|| SlyError::Cortex("Cache ID not found in response".to_string()))?
             .to_string();
 
         Ok(cache_id)
     }
 
-    pub async fn generate(&self, prompt: &str, level: ThinkingLevel) -> Result<String> {
-        // Gemini 3 Flash (Primary) with Thinking Config
-        let primary_result = async {
-            let model = "gemini-3-flash-preview";
-            let url = format!(
-                "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
-                model
-            );
-
-            let mut generation_config = json!({});
-            if let Some(level_str) = level.as_str() {
-                generation_config["thinkingConfig"] = json!({
-                    "thinkingLevel": level_str
-                });
-            }
-
-            // Include SYSTEM_PROMPT in systemInstruction with Layout Context
-            let dynamic_prompt = format!("{}\n\n## ACTIVE CONTEXT\n* **Tech Stack:** {}\n", SYSTEM_PROMPT, self.tech_stack);
-            
-            let payload = json!({
-                "systemInstruction": {
-                    "parts": [{ "text": dynamic_prompt }]
-                },
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": generation_config
-            });
-
-            let res = self.client.post(&url)
-                .header("x-goog-api-key", &self.api_key)
-                .json(&payload)
-                .send()
-                .await?;
-
-            if !res.status().is_success() {
-                return Err(anyhow::anyhow!("Gemini 3 Status: {}", res.status()));
-            }
-
-            let body: Value = res.json().await?;
-            extract_text(&body).context("Gemini 3 response parsing failed")
-        }.await;
-
-        match primary_result {
-            Ok(text) => return Ok(text),
-            Err(e) => eprintln!("Primary model failed, switching to fallback. Error: {}", e),
-        }
-
-        // Gemini 2.5 Flash (Fallback)
-        let model_fallback = "gemini-2.5-flash";
-        let url_fallback = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
-            model_fallback
+    pub async fn generate(&self, prompt: &str, _level: ThinkingLevel) -> Result<String> {
+        let model = "models/gemini-2.5-flash";
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/{}:generateContent",
+            model
         );
 
-        let payload_fallback = json!({
+        let dynamic_prompt = format!("{}\n\n## ACTIVE CONTEXT\n* **Tech Stack:** {}\n", SYSTEM_PROMPT, self.tech_stack);
+        
+        let payload = json!({
             "systemInstruction": {
-                "parts": [{ "text": SYSTEM_PROMPT }]
+                "parts": [{ "text": dynamic_prompt }]
             },
             "contents": [{"parts": [{"text": prompt}]}]
         });
 
-        let res = self.client.post(&url_fallback)
+        let res = self.client.post(&url)
             .header("x-goog-api-key", &self.api_key)
-            .json(&payload_fallback)
+            .json(&payload)
             .send()
             .await?;
 
         if !res.status().is_success() {
             let status = res.status();
             let err_text = res.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("Fallback (Gemini 2.5) failed. Status: {}, Body: {}", status, err_text));
+            return Err(SlyError::Cortex(format!("Gemini 2.5 Status: {} - {}", status, err_text)));
         }
 
         let body: Value = res.json().await?;
-        extract_text(&body).context("Gemini 2.5 response parsing failed")
+        extract_text(&body).ok_or_else(|| SlyError::Cortex("Gemini 2.5 response parsing failed".to_string()))
     }
 
-    pub async fn generate_sync(&self, model: &str, prompt: &str) -> Result<String> {
+    pub async fn generate_stream(&self, prompt: &str, _level: ThinkingLevel) -> Result<impl futures::Stream<Item = Result<String>>> {
+        let model = "models/gemini-2.5-flash"; 
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-            model, self.api_key
+            "https://generativelanguage.googleapis.com/v1beta/{}:streamGenerateContent",
+            model
         );
 
-        let payload = serde_json::json!({
+        let dynamic_prompt = format!("{}\n\n## ACTIVE CONTEXT\n* **Tech Stack:** {}\n", SYSTEM_PROMPT, self.tech_stack);
+        
+        let payload = json!({
+            "systemInstruction": { "parts": [{ "text": dynamic_prompt }] },
             "contents": [{"parts": [{"text": prompt}]}]
         });
 
-        let res = self.client.post(&url).json(&payload).send().await?;
-        if !res.status().is_success() {
-             return Err(anyhow::anyhow!("GenerateSync failed: {}", res.status()));
-        }
-        let body: Value = res.json().await?;
-        extract_text(&body).context("No text in response")
-    }
-
-    pub async fn conduct_debate(&self, topic: &str, context: &str) -> Result<DebateSynthesis> {
-        println!(
-            "{}",
-            format!("\n⚖️  CONDUCTING DEBATE: {}", topic)
-                .yellow()
-                .bold()
-        );
-
-        let debate = Debate::security_vs_performance();
-        let prompts = debate.generate_prompts(context, topic);
-
-        let mut mutrounds = Vec::new();
-        let mut handles = Vec::new();
-
-        for (persona_name, prompt) in prompts {
-            let model = self.config.primary_model.clone();
-            let p_name = persona_name.clone();
-            let cortex_ref = self.client.clone();
-            let api_key = self.api_key.clone();
-
-            handles.push(tokio::spawn(async move {
-                let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}", model, api_key);
-                let payload = serde_json::json!({ "contents": [{"parts": [{"text": prompt}]}] });
-
-                if let Ok(res) = cortex_ref.post(&url).json(&payload).send().await {
-                    if let Ok(body) = res.json::<Value>().await {
-                        return extract_text(&body).map(|t| (p_name, t));
-                    } 
-                }
-                None
-            }));
-        }
-
-        for handle in handles {
-            if let Ok(Some((name, response))) = handle.await {
-                let round = Debate::parse_response(&name, &response);
-                println!(
-                    "  🗣️  {}: Found {} issues.",
-                    name.cyan(),
-                    round.suggestions.len()
-                );
-                mutrounds.push(round);
-            }
-        }
-
-        Ok(Debate::synthesize(&mutrounds))
-    }
-
-    // Pure Linting: Logic Only, IO/Context via arguments
-    pub async fn perform_lint(&self, code: &str, context: &str) -> Result<Vec<LintViolation>> {
-        // println!("{}", format!("\n🕵️  LINTING...").yellow().bold()); 
-        // Caller handles UI logging with filename
-
-        if code.is_empty() {
-            return Ok(vec![]);
-        }
-
-        let prompt = SemanticLinter::lint_prompt(code, context);
-        let response = self
-            .generate_sync(&self.config.primary_model, &prompt)
+        let res = self.client.post(&url)
+            .header("x-goog-api-key", &self.api_key)
+            .json(&payload)
+            .send()
             .await?;
+            
+        if !res.status().is_success() {
+            let status = res.status();
+            let err_text = res.text().await.unwrap_or_default();
+            return Err(SlyError::Cortex(format!("Stream failed: {} - {}", status, err_text)));
+        }
 
-        Ok(SemanticLinter::parse_response(&response))
-    }
+        use futures::StreamExt;
+        let stream = res.bytes_stream().map(|item| {
+            item.map_err(SlyError::from).and_then(|bytes| {
+                let s = std::str::from_utf8(&bytes).unwrap_or("").trim();
+                // Handle stream delimiters:
+                // First chunk: "[{...}"
+                // Middle chunk: ",{...}"
+                // Last chunk: ",{...}]"
+                let clean_s = s.trim_start_matches('[').trim_start_matches(',').trim_end_matches(']');
+                
+                if clean_s.is_empty() {
+                    return Ok("".to_string()); // Skip empty delimiters
+                }
 
-    pub async fn reflect(&self, context: &str) -> Result<Vec<String>> {
-        let prompt = crate::reflexion::Reflexion::critique_prompt();
-        let full_prompt = format!("{}\n\nCONTEXT TO CRITIQUE:\n{}", prompt, context);
-        
-        let response = self.generate(&full_prompt, ThinkingLevel::Minimal).await?;
-        Ok(crate::reflexion::Reflexion::parse_heuristics(&response))
+                let val: Value = serde_json::from_str(clean_s).map_err(|e| SlyError::Cortex(format!("JSON Parse Error: {} | Raw: {:?}", e, bytes)))?;
+                extract_text(&val).ok_or_else(|| SlyError::Cortex("Stream chunk missing text".to_string()))
+            })
+        });
+
+        Ok(stream)
     }
 }
 
@@ -379,4 +258,45 @@ fn extract_text(body: &Value) -> Option<String> {
         .get("text")?
         .as_str()
         .map(|s| s.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_text_valid() {
+        let body = json!({
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            { "text": "hello world" }
+                        ]
+                    }
+                }
+            ]
+        });
+        assert_eq!(extract_text(&body).unwrap(), "hello world");
+    }
+
+    #[test]
+    fn test_extract_text_invalid() {
+        let body = json!({"error": "not found"});
+        assert!(extract_text(&body).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_model_generation() -> Result<()> {
+        dotenvy::dotenv().ok();
+        if std::env::var("GEMINI_API_KEY").is_err() {
+            println!("Skipping model test: GEMINI_API_KEY not set.");
+            return Ok(());
+        }
+        let config = SlyConfig::default();
+        let cortex = Cortex::new(config, "rust".to_string())?;
+        let res = cortex.generate("Write a rust hello world function.", ThinkingLevel::Low).await?;
+        assert!(res.contains("fn main") || res.contains("println!"));
+        Ok(())
+    }
 }

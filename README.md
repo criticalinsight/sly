@@ -8,15 +8,15 @@ Sly is a high-performance, single-binary autonomous coding agent written in **Ru
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org)
 [![Platform](https://img.shields.io/badge/platform-macos-lightgrey.svg)](https://www.apple.com/macos/)
 
-*   **Godmode & Decomplected**: Formal separation of source "Value" from transient build state, resulting in 95% CPU reduction during idle.
-*   **Persistent Supervisor**: A dedicated background daemon (`sly supervisor`) that monitors and manages your coding sessions.
-*   **Interactive Remote Control**: Manage your agent from anywhere via Telegram with interactive buttons, real-time log streaming (`/logs`), and remote plan approval.
-*   **Operational Hardening**: Built-in **Circuit Breaker** to prevent crash loops and **PID-aware Singleton Enforcement** for multi-instance safety.
-*   **Haptic Telemetry**: Real-time event streaming of agent facts (tool use, directives, errors) with **Semantic Batching** (grouping 50+ identical errors into one summary) via a **Decomplected Outbox**.
-*   **Mac Native**: Installs as a native macOS LaunchAgent for automatic start on login.
-*   **Auto-Healing**: Reliable recovery from crashes or OOM events.
-*   **Active Memory**: Graph-Guided RAG via **CozoDB** and Metal-accelerated embeddings (**Candle/BGE**).
-*   **Cortex**: Powered by **Gemini 2.5 Flash** with **Thinking Levels** (`High` / `Low`).
+*   **Ephemeral Velocity**: Support for `--ephemeral` (in-memory) engines. Treat session data as transient **Values** instead of persistent **Places**, enabling zero-friction parallel execution.
+*   **Dynamic Workflows**: Orchestrate complex multi-step routines (e.g., `/fix`, `/test`, `/docs`) via hot-swappable markdown templates in `.agent/workflows/`.
+*   **Recursive Reflexion**: Autonomous self-healing OODA loops. If a shell command fails, Sly automatically spawns a sub-agent to analyze and fix the error without user intervention.
+*   **Sovereign MCP Ecosystem**: 
+    - **Auto-Discovery**: Zero-config detection of MCP servers in `~/.sly/mcp/`.
+    - **Universal Knowledge Retrieval (UKR)**: Unified search layer across all disparate providers.
+    - **Tool Chaining**: Persistent session results enable complex "piped" workflows between tools.
+*   **Active Memory**: Graph-Guided Datalog Store via **CozoDB**. **Cross-session Heuristic Persistence** for cumulative technical learning.
+*   **Cortex**: Powered by **Gemini 2.5/3.0** with high-speed OODA loops and architectural reasoning.
 
 ## 🛠️ Quick Start
 
@@ -74,11 +74,14 @@ max_autonomous_loops = 50       # Circuit breaker for API spend
 primary_model = "gemini-2.5-flash"
 ```
 
-### Slash Commands
-- `/path <path>`: Change the target codebase directory.
-- `/status`: Show memory usage, session turns, and token counts.
-- `/clear`: Wipe the current session history (RAM only).
-- `/exit`: Quit the agent.
+### Slash Commands & Workflows
+- `/run <task>`: (Or plain text) Start a persistent session.
+- `/ask <query>`: Direct reasoning without filesystem side-effects.
+- `/fix`: **Self-Healing Loop**. Captures compile errors as facts and derives a fix.
+- `/test`: Trigger test suites and receive summarized failure diffs.
+- `/docs`: Re-analyze codebase and sync documentation.
+- `/roadmap`: Implement the next prioritized item from `ROADMAP.md`.
+- `--ephemeral`: Flag to run any command without a database lock.
 
 ## 🤝 Contributing
 

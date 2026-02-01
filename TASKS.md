@@ -8,6 +8,11 @@
     - [x] Secure Token Management <!-- id: 1204 -->
     - [x] Verify Telegram Notifications <!-- id: 1205 -->
 
+- [/] **Phase 22: Haptic Multimodal Vision** <!-- id: 1800 -->
+    - [ ] Implement `src/io/vision.rs` (screencapture) <!-- id: 1801 -->
+    - [ ] Add `sly vision` CLI command <!-- id: 1802 -->
+    - [ ] Integrate visual grounding into Supervisor <!-- id: 1803 -->
+
 - [x] **Phase 7: Godmode Operational Hardening** <!-- id: 1300 -->
     - [x] Interactive UI (Inline Keyboards) <!-- id: 1301 -->
     - [x] Operational Hardening (Circuit Breaker) <!-- id: 1302 -->
