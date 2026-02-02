@@ -2,10 +2,8 @@ use crate::core::parser::{parse_action, AgentAction};
 use crate::mcp::registry::{self, McpToolMetadata};
 use colored::*;
 use std::sync::Arc;
-use std::collections::HashMap;
 use crate::memory::MemoryStore;
 
-use crate::core::bus::SlyEvent;
 pub async fn step_agent_session(
     session_id: String, 
     state: Arc<crate::core::state::GlobalState>,
@@ -37,7 +35,7 @@ pub async fn step_agent_session(
     drop(cache); // Release lock early
     
     // 4. Prepare Context with Sliding Window
-    let checkpoint = session.clone();
+    let _checkpoint = session.clone();
     let context_limit = 10;
     let pruned_messages = if session.messages.len() > context_limit {
         let first = session.messages.first().cloned().unwrap_or_default();
@@ -100,8 +98,8 @@ pub async fn step_agent_session(
 
     let stream_res = state.cortex.generate_stream(history, level, session.cache_id.clone()).await;
     let mut full_response = String::new();
-    let mut last_tg_update = std::time::Instant::now();
-    let mut tg_msg_id: Option<i64> = None;
+    let _last_tg_update = std::time::Instant::now();
+    let _tg_msg_id: Option<i64> = None;
 
     match stream_res {
         Ok(mut stream) => {

@@ -49,7 +49,7 @@ async fn main() -> Result<()> {
         let memory_path = if is_ephemeral { ":memory:".to_string() } else { format!("{}/cozo", SLY_DIR) };
         let memory = Arc::new(Memory::new(&memory_path, false).await?);
         let memory_raw = memory.clone();
-        let config_clone = config.clone();
+        let _config_clone = config.clone();
         
         let cortex = Arc::new(Cortex::new(config.clone(), "Supervisor/Background".to_string())?);
         let overlay = Arc::new(OverlayFS::new(&std::env::current_dir().map_err(|e| SlyError::Io(e))?, "supervisor_session")?);
@@ -71,12 +71,12 @@ async fn main() -> Result<()> {
         ));
 
         // Wire Up Adapters
-        let mut registry = sly::io::adapter::AdapterRegistry::new();
+        let mut _registry = sly::io::adapter::AdapterRegistry::new();
         // But TelegramClient implements SlyAdapter.
         
         println!("{} 🚀 Event-Driven Supervisor System Online", "⚡".yellow().bold());
         
-        let (priority_tx, priority_rx) = mpsc::channel(100);
+        let (_priority_tx, priority_rx) = mpsc::channel(100);
         let (_background_tx, background_rx) = mpsc::channel(1000);
         
         // Bridge Legacy to Bus

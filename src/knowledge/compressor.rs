@@ -51,9 +51,6 @@ mod patterns {
     pub static RUST_FIELD: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?(\w+)\s*:\s*([^,}\n]+)").unwrap()
     });
-    pub static RUST_VARIANT: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?m)^\s*(\w+)(?:\s*\{[^}]*\}|\s*\([^)]*\))?").unwrap()
-    });
 
     // TypeScript patterns
     pub static TS_INTERFACE: LazyLock<Regex> = LazyLock::new(|| {
@@ -217,9 +214,6 @@ mod patterns {
     pub static ZIG_ENUM: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?m)^(?:pub\s+)?const\s+(\w+)\s*=\s*enum(?:\([^)]+\))?\s*\{").unwrap()
     });
-    pub static ZIG_CONST: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?m)^(?:pub\s+)?const\s+(\w+)(?::\s*([^=]+))?\s*=").unwrap()
-    });
     pub static ZIG_IMPORT: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r#"@import\s*\(\s*"([^"]+)""#).unwrap()
     });
@@ -267,9 +261,6 @@ mod patterns {
     });
     pub static CSS_VARIABLE: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?m)^\s*--([a-zA-Z][\w-]*)\s*:").unwrap()
-    });
-    pub static CSS_IMPORT: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"@import\s+(?:url\()?[']?([^'\)]+)").unwrap()
     });
     pub static CSS_MEDIA: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?m)^@media\s*([^{]+)").unwrap()
@@ -319,9 +310,6 @@ mod patterns {
     pub static KOTLIN_PACKAGE: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?m)^package\s+([\w.]+)").unwrap()
     });
-    pub static KOTLIN_IMPORT: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?m)^import\s+([\w.]+)").unwrap()
-    });
     pub static KOTLIN_CLASS: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?m)^(?:data\s+|sealed\s+|open\s+|abstract\s+)?class\s+(\w+)(?:\s*:\s*([^{(]+))?").unwrap()
     });
@@ -348,16 +336,10 @@ mod patterns {
     pub static RUBY_REQUIRE: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?m)^require(?:_relative)?\s+[']([^']+)").unwrap()
     });
-    pub static RUBY_ATTR: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?m)^\s*attr_(?:reader|writer|accessor)\s+:(\w+)").unwrap()
-    });
 
     // PHP patterns
     pub static PHP_NAMESPACE: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?m)^namespace\s+([\w\\]+);").unwrap()
-    });
-    pub static PHP_USE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?m)^use\s+([\w\\]+)").unwrap()
     });
     pub static PHP_CLASS: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?m)^(?:abstract\s+|final\s+)?class\s+(\w+)(?:\s+extends\s+(\w+))?(?:\s+implements\s+([^{]+))?").unwrap()
@@ -413,9 +395,6 @@ mod patterns {
     pub static GQL_ENUM: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?m)^enum\s+(\w+)\s*\{").unwrap()
     });
-    pub static GQL_QUERY: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?m)^\s*(\w+)\s*(?:\([^)]+\))?\s*:\s*([^\n{]+)").unwrap()
-    });
 
     // Terraform/HCL patterns
     pub static TF_RESOURCE: LazyLock<Regex> = LazyLock::new(|| {
@@ -462,21 +441,7 @@ impl Default for CompressedOutput {
 }
 
 impl CompressedOutput {
-    fn to_string(&self) -> String {
-        let mut output = String::new();
-        
-        if !self.imports.is_empty() {
-            output.push_str(&format!("imports: {}\n", self.imports.join(", ")));
-        }
-        
-        output.push_str(&self.symbols);
-        
-        if !self.exports.is_empty() {
-            output.push_str(&format!("\nexports: {}\n", self.exports.join(", ")));
-        }
-        
-        output
-    }
+    // to_string method removed as it was unused
 }
 
 impl SymbolicCompressor {

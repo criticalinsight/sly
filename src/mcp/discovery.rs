@@ -2,7 +2,6 @@ use crate::error::{Result, SlyError};
 use crate::mcp::client::McpClient;
 use crate::mcp::transport::StdioTransport;
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use walkdir::WalkDir;

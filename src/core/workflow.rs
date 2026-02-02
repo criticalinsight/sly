@@ -59,14 +59,14 @@ pub async fn execute_workflow(name: &str, state: Arc<GlobalState>) -> Result<()>
         let mut stdout_reader = BufReader::new(stdout).lines();
         let mut stderr_reader = BufReader::new(stderr).lines();
 
-        let bus_clone = state.bus.clone();
+        let _bus_clone = state.bus.clone();
         tokio::spawn(async move {
             while let Ok(Some(line)) = stdout_reader.next_line().await {
                 println!("   [WF] {}", line);
             }
         });
 
-        let bus_err = state.bus.clone();
+        let _bus_err = state.bus.clone();
         tokio::spawn(async move {
             while let Ok(Some(line)) = stderr_reader.next_line().await {
                 eprintln!("   [WF ERR] {}", line);

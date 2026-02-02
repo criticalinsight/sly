@@ -4,7 +4,7 @@ use crate::error::{Result, SlyError};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{HashMap, BTreeMap};
+use std::collections::BTreeMap;
 use cozo::{DataValue, ScriptMutability};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
