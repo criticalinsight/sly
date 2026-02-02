@@ -1,4 +1,7 @@
 pub mod events;
-pub mod watcher;
+pub mod adapter;
 pub mod telegram;
+pub mod watcher;
 pub mod haptics;
+pub mod interface;
+pub mod cli;

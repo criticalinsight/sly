@@ -7,13 +7,7 @@ use colored::*;
 
 pub async fn attempt_repair(
     session_id: &str,
-    _config: &SlyConfig,
-    memory: Arc<Memory>,
-    cortex: Arc<crate::core::cortex::Cortex>,
-    mcp_clients: Arc<tokio::sync::Mutex<std::collections::HashMap<String, Arc<crate::mcp::client::McpClient>>>>,
-    metadata_cache: Arc<tokio::sync::Mutex<Vec<crate::mcp::registry::McpToolMetadata>>>,
-    overlay: Arc<crate::safety::OverlayFS>,
-    telegram: Option<Arc<tokio::sync::Mutex<crate::io::telegram::TelegramClient>>>,
+    state: Arc<crate::core::state::GlobalState>,
     failed_command: &str,
     stderr: &str,
 ) -> Result<String> {
@@ -30,36 +24,24 @@ pub async fn attempt_repair(
 
     let mut session = crate::core::session::AgentSession::new(goal.clone());
     session.id = repair_id.clone();
-    memory.create_session(&session).await?;
+    state.memory_raw.create_session(&session).await?;
 
-    if let Some(tg) = &telegram {
-         let _ = tg.lock().await.send_message(&format!("🚑 <b>Self-Correction Triggered</b>\n\nI encountered an error running <code>{}</code>.\n\nSpawning sub-agent <code>{}</code> to fix it...", failed_command, repair_id)).await;
-    }
+    let _ = state.bus.publish(crate::core::bus::SlyEvent::Thought(session_id.to_string(), format!("🚑 Self-Correction Triggered for error in `{}`. Spawning sub-agent `{}`...", failed_command, repair_id))).await;
 
     // 3. Run the sub-agent for a limited depth (e.g., 5 steps)
     // We must Box::pin this to avoid E0733 recursion error
+    let state_clone = state.clone();
     let repair_id_clone = repair_id.clone();
-    let memory_clone = memory.clone();
-    let cortex_clone = cortex.clone();
-    let mcp_clients_clone = mcp_clients.clone();
-    let metadata_cache_clone = metadata_cache.clone();
-    let overlay_clone = overlay.clone();
-    let telegram_clone = telegram.clone();
 
     Box::pin(async move {
         for _ in 0..5 {
-            step_agent_session(
+            crate::core::agent::step_agent_session(
                 repair_id_clone.clone(),
-                memory_clone.clone(),
-                cortex_clone.clone(),
-                mcp_clients_clone.clone(),
-                metadata_cache_clone.clone(),
-                overlay_clone.clone(),
-                telegram_clone.clone(),
+                state_clone.clone(),
                 5 
             ).await;
 
-            if let Ok(Some(s)) = memory_clone.get_session(&repair_id_clone).await {
+            if let Ok(Some(s)) = state_clone.memory_raw.get_session(&repair_id_clone).await {
                 if matches!(s.status, crate::core::session::SessionStatus::Completed) {
                     break;
                 }
@@ -68,7 +50,7 @@ pub async fn attempt_repair(
     }).await;
 
     // 4. Retrieve the result
-    let session_final = memory.get_session(&repair_id).await?.unwrap();
+    let session_final = state.memory_raw.get_session(&repair_id).await?.unwrap();
     let last_msg = session_final.messages.last().cloned().unwrap_or_default();
 
     println!("{} 🚑 Repair Sequence Complete. Result: {}", "✅".green(), last_msg.lines().last().unwrap_or("Unknown"));

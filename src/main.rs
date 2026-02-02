@@ -46,36 +46,45 @@ async fn main() -> Result<()> {
             .map(|t| t.trim().to_string())
             .map_err(|_| SlyError::Task("TELEGRAM_BOT_TOKEN not found in .env".to_string()))?;
         
-        let masked = if token.len() > 10 { format!("{}...{}", &token[0..5], &token[token.len()-5..]) } else { "???".to_string() };
-        println!("🔑 Supervisor Token: {}", masked);
-        println!("🔢 Token Bytes: {:?}", token.as_bytes());
-        
         let memory_path = if is_ephemeral { ":memory:".to_string() } else { format!("{}/cozo", SLY_DIR) };
         let memory = Arc::new(Memory::new(&memory_path, false).await?);
         let memory_raw = memory.clone();
+        let config_clone = config.clone();
         
         let cortex = Arc::new(Cortex::new(config.clone(), "Supervisor/Background".to_string())?);
         let overlay = Arc::new(OverlayFS::new(&std::env::current_dir().map_err(|e| SlyError::Io(e))?, "supervisor_session")?);
         
+        let bus = Arc::new(sly::core::bus::EventBus::new());
+        let mut telegram_client = sly::io::telegram::TelegramClient::new(token.clone());
+        if let Some(chat_id) = config.telegram_chat_id {
+            telegram_client.set_chat_id(chat_id);
+        }
+
+        let state = Arc::new(GlobalState::new(
+            config.clone(), 
+            memory.clone() as Arc<dyn MemoryStore>, 
+            memory_raw.clone(), 
+            overlay, 
+            cortex.clone(), 
+            bus.clone(),
+            Box::new(telegram_client) // Pass TelegramClient as AgentIO
+        ));
+
+        // Wire Up Adapters
+        let mut registry = sly::io::adapter::AdapterRegistry::new();
+        // But TelegramClient implements SlyAdapter.
+        
+        println!("{} 🚀 Event-Driven Supervisor System Online", "⚡".yellow().bold());
+        
         let (priority_tx, priority_rx) = mpsc::channel(100);
         let (_background_tx, background_rx) = mpsc::channel(1000);
         
-        let telegram = Some(Arc::new(tokio::sync::Mutex::new(sly::io::telegram::TelegramClient::new(token.clone()))));
-        let state = Arc::new(GlobalState::new(config.clone(), memory.clone() as Arc<dyn MemoryStore>, memory_raw.clone(), overlay, cortex.clone(), telegram));
+        // Bridge Legacy to Bus
+        bus.bridge_impulse(priority_rx).await; // This will spawn a task
+        bus.bridge_impulse(background_rx).await;
 
-        let supervisor = sly::core::supervisor::Supervisor::new(token, priority_tx.clone(), cortex.clone(), memory_raw.clone());
-        
-        println!("{} 🚀 Unified Supervisor System Initializing...", "⚡".yellow().bold());
-        if is_ephemeral { println!("{} Running in Ephemeral Mode", "🧪".yellow()); }
-        
-        tokio::select! {
-            res = supervisor.run() => {
-                if let Err(e) = res { eprintln!("Supervisor Crash: {}", e); }
-            }
-            _ = cortex_loop(priority_rx, background_rx, state) => {
-                println!("Cortex loop terminated.");
-            }
-        }
+
+        cortex_loop(state).await;
         return Ok(());
     }
 
@@ -89,36 +98,20 @@ async fn main() -> Result<()> {
         }
     }
 
+    let bus = Arc::new(sly::core::bus::EventBus::new());
     let state = if is_ephemeral {
-        println!("{} Running in Ephemeral Mode (In-Memory only)", "🧪".yellow());
-        Arc::new(GlobalState::new_transient().await?)
+        Arc::new(GlobalState::new_transient().await?) // Transient already creates its own bus, let's fix that
     } else {
         match Memory::new(&format!("{}/cozo", SLY_DIR), false).await {
             Ok(memory) => {
                 let memory_arc = Arc::new(memory);
                 let memory_raw = memory_arc.clone();
-                let memory_store: Arc<dyn MemoryStore> = memory_arc.clone();
                 let cortex = Arc::new(Cortex::new(config.clone(), "Generic/Auto".to_string())?);
                 let overlay = Arc::new(OverlayFS::new(&std::env::current_dir().map_err(|e| SlyError::Io(e))?, "godmode_session")?);
-                
-                let telegram = if let Ok(token) = env::var("TELEGRAM_BOT_TOKEN") {
-                    let mut client = sly::io::telegram::TelegramClient::new(token.trim().to_string());
-                    if let Some(chat_id) = config.telegram_chat_id {
-                        client.set_chat_id(chat_id);
-                    }
-                    Some(Arc::new(tokio::sync::Mutex::new(client)))
-                } else {
-                    None
-                };
-
-                Arc::new(GlobalState::new(config.clone(), memory_store, memory_raw.clone(), overlay, cortex, telegram))
+                let io: Box<dyn sly::io::interface::AgentIO> = Box::new(sly::io::cli::CliAdapter::new("cli_session"));
+                Arc::new(GlobalState::new(config.clone(), memory_arc.clone() as Arc<dyn MemoryStore>, memory_raw.clone(), overlay, cortex.clone(), bus.clone(), io))
             },
-            Err(e) if e.to_string().contains("locked") || e.to_string().contains("Resource temporarily unavailable") => {
-                println!("{} Database is locked by another process.", "⚠️".red());
-                println!("{} Falling back to Ephemeral Mode...", "🧠".yellow());
-                Arc::new(GlobalState::new_transient().await?)
-            },
-            Err(e) => return Err(e),
+            Err(_) => Arc::new(GlobalState::new_transient().await?)
         }
     };
 
@@ -154,19 +147,22 @@ async fn main() -> Result<()> {
     let _watcher = setup_watcher(Path::new("."), background_tx.clone())?;
     println!("{} Safety Shield (OverlayFS) Active", "🛡️".green());
     println!("{}", "🚀 Godmode Activated: Event Bus Online".green().bold());
-
     if let Some(imp) = initial_impulse {
-        priority_tx.send(imp).await.map_err(|e| SlyError::Task(format!("Failed to send initial impulse: {}", e)))?;
+        let _ = state.bus.publish(sly::core::bus::SlyEvent::Impulse(imp)).await;
     }
 
-    let shutdown_tx = priority_tx.clone();
+    // Bridge Legacy to Bus
+    state.bus.bridge_impulse(priority_rx).await;
+    state.bus.bridge_impulse(background_rx).await;
+
+    let shutdown_bus = state.bus.clone();
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.ok();
         println!("\n{} Graceful shutdown requested...", "🛑".red());
-        let _ = shutdown_tx.send(sly::io::events::Impulse::SystemInterrupt).await;
+        let _ = shutdown_bus.publish(sly::core::bus::SlyEvent::Impulse(sly::io::events::Impulse::SystemInterrupt)).await;
     });
 
-    cortex_loop(priority_rx, background_rx, state).await;
+    cortex_loop(state).await;
 
     Ok(())
 }

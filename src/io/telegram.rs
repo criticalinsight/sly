@@ -1,8 +1,12 @@
 use crate::error::{Result, SlyError};
+use std::sync::Arc;
+use crate::io::events::Impulse;
 use std::path::Path;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use crate::io::interface::{AgentIO, InputMessage};
+use std::collections::VecDeque;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Chat {
@@ -51,6 +55,9 @@ pub struct TelegramClient {
     token: String,
     client: Client,
     chat_id: Option<i64>,
+    // Polling state
+    offset: i64,
+    buffer: VecDeque<Update>,
 }
 
 impl TelegramClient {
@@ -59,6 +66,8 @@ impl TelegramClient {
             token,
             client: Client::new(),
             chat_id: None,
+            offset: 0,
+            buffer: VecDeque::new(),
         }
     }
 
@@ -268,6 +277,174 @@ impl TelegramClient {
         }
 
         Ok(resp.result)
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentIO for TelegramClient {
+    async fn next_message(&mut self) -> Result<Option<InputMessage>> {
+        // 1. Drain buffer first
+        if let Some(update) = self.buffer.pop_front() {
+             return Ok(self.process_update(update));
+        }
+
+        // 2. Fetch new updates
+        match self.get_updates(self.offset).await {
+            Ok(updates) => {
+                if updates.is_empty() {
+                    return Ok(None);
+                }
+                for update in updates {
+                    self.offset = update.update_id + 1;
+                    self.buffer.push_back(update);
+                }
+                // Return the first one we just fetched
+                if let Some(first) = self.buffer.pop_front() {
+                    Ok(self.process_update(first))
+                } else {
+                    Ok(None)
+                }
+            }
+            Err(e) => {
+                eprintln!("Telegram Polling Error: {}", e);
+                // Return None (or error?) to retry
+                // For now, let's sleep a bit to verify we don't spam loop on error, 
+                // but traits are async so caller handles loop.
+                Ok(None)
+            }
+        }
+    }
+
+    async fn send_message(&mut self, content: &str) -> Result<()> {
+        self.send_message(content).await.map(|_| ())
+    }
+}
+
+impl TelegramClient {
+    fn process_update(&self, update: Update) -> Option<InputMessage> {
+        let mut sender = "unknown".to_string();
+        let content = if let Some(msg) = update.message {
+             sender = format!("telegram_user_{}", msg.chat.id);
+             msg.text?
+        } else if let Some(cb) = update.callback_query {
+             // Handle callbacks as user inputs?
+             // Simplification: Return data as text
+             cb.data?
+        } else {
+            return None;
+        };
+
+        Some(InputMessage {
+            content,
+            sender,
+            session_id: "default_telegram_session".to_string(), // In Phase 5 simplification, we might need dynamic session mapping
+        })
+    }
+}
+
+pub struct TelegramAdapter(pub Arc<tokio::sync::Mutex<TelegramClient>>);
+
+#[async_trait::async_trait]
+impl crate::io::adapter::SlyAdapter for TelegramAdapter {
+    fn name(&self) -> &str { "telegram" }
+    async fn handle(&self, event: crate::core::bus::SlyEvent) -> Result<()> {
+        self.0.lock().await.handle(event).await
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::io::adapter::SlyAdapter for TelegramClient {
+    fn name(&self) -> &str {
+        "telegram"
+    }
+
+    async fn handle(&self, event: crate::core::bus::SlyEvent) -> Result<()> {
+        use crate::core::bus::SlyEvent;
+        match event {
+            SlyEvent::Thought(_, ref content) | SlyEvent::ThoughtStream(_, ref content) => {
+                // If it's a stream, we should probably debounce or use edit_message
+                // For now, let's just handle complete Thoughts to keep it simple
+                if matches!(event, SlyEvent::Thought(_, _)) {
+                    let _ = self.send_message(content).await;
+                }
+            }
+            SlyEvent::Error(_, msg) => {
+                let _ = self.send_message(&format!("❌ <b>Error</b>\n\n{}", html_escape(&msg))).await;
+            }
+            SlyEvent::Action(_, msg) => {
+                let _ = self.send_message(&format!("⚡ <b>Action</b>: {}", html_escape(&msg))).await;
+            }
+            SlyEvent::SystemStatus(status) => {
+                let _ = self.send_message(&format!("ℹ️ <b>System</b>: {}", html_escape(&status))).await;
+            }
+            _ => {} // Ignore other events for now
+        }
+        Ok(())
+    }
+}
+
+impl TelegramClient {
+    pub async fn start_polling(this: Arc<tokio::sync::Mutex<Self>>, bus: crate::core::bus::ArcBus) {
+        let mut offset = 0;
+        println!("📡 Telegram Polling Started.");
+        
+        loop {
+            let updates = {
+                let tg = this.lock().await;
+                tg.get_updates(offset).await
+            };
+
+            match updates {
+                Ok(u) => {
+                    for update in u {
+                        offset = update.update_id + 1;
+                        if let Some(msg) = update.message {
+                            if let Some(text) = msg.text {
+                                if text.starts_with('/') {
+                                    let cmd = text.trim_start_matches('/');
+                                    let parts: Vec<&str> = cmd.split_whitespace().collect();
+                                    let name = parts[0];
+                                    
+                                    match name {
+                                        "run" => {
+                                            let task = parts[1..].join(" ");
+                                            let _ = bus.publish(crate::core::bus::SlyEvent::Impulse(Impulse::InitiateSession(task))).await;
+                                        }
+                                        "stop" => {
+                                            let _ = bus.publish(crate::core::bus::SlyEvent::Impulse(Impulse::SystemInterrupt)).await;
+                                        }
+                                        _ => {
+                                            // Assume it's a workflow
+                                            let _ = bus.publish(crate::core::bus::SlyEvent::Impulse(Impulse::ExecuteWorkflow(name.to_string()))).await;
+                                        }
+                                    }
+                                } else {
+                                    // Treat as a new session request
+                                    let _ = bus.publish(crate::core::bus::SlyEvent::Impulse(Impulse::InitiateSession(text))).await;
+                                }
+                            }
+                        }
+                        if let Some(cb) = update.callback_query {
+                            if let Some(data) = cb.data {
+                                if data.starts_with("think:") {
+                                    let session_id = data.replace("think:", "");
+                                    let _ = bus.publish(crate::core::bus::SlyEvent::Impulse(Impulse::ThinkStep(session_id))).await;
+                                } else if data.starts_with("undo:") {
+                                    let session_id = data.replace("undo:", "");
+                                    let _ = bus.publish(crate::core::bus::SlyEvent::Impulse(Impulse::Undo(session_id))).await;
+                                }
+                                // Answer callback to stop the spinning circle
+                                let _ = this.lock().await.answer_callback_query(&cb.id).await;
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("⚠️ Telegram Polling Error: {}", e);
+                }
+            }
+            tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+        }
     }
 }
 

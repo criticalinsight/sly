@@ -1,4 +1,5 @@
 use crate::error::{Result, SlyError};
+use colored::*;
 use cozo::{DataValue, DbInstance, ScriptMutability};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -126,17 +127,19 @@ impl CozoBackend {
         self.run_schema_script(create_event_log, "event_log")?;
 
         let create_sessions = "
-            :create sessions {
+            :create sessions_v6 {
                 id: String
                 =>
                 status: String,
                 depth: Int,
                 input: String,
-                last_result: Json,
+                last_result: String,
+                cache_id: String?,
+                metadata: String,
                 created_at: Int
             }
         ";
-        self.run_schema_script(create_sessions, "sessions")?;
+        self.run_schema_script(create_sessions, "sessions_v6")?;
 
         let create_messages = "
             :create session_messages {
@@ -162,22 +165,24 @@ impl CozoBackend {
     }
 
     fn run_schema_script(&self, script: &str, name: &str) -> Result<()> {
-        if let Err(e) = self.db.run_script(script, Default::default(), ScriptMutability::Mutable) {
-            let msg = e.to_string();
-            // Ignore already exists or field conflicts (handled by pure decommissioning)
-            if !msg.contains("conflicts with an existing one") && !msg.contains("already exists") {
-                // If it contains non-existent field, it means the table exists but has a different schema.
-                // In DECOMMISSION mode, we just remove and recreate. 
-                if msg.contains("non-existent field") || msg.contains("mismatch") {
-                   let remove_script = format!("::remove {}", name);
-                   let _ = self.db.run_script(&remove_script, Default::default(), ScriptMutability::Mutable);
-                   let _ = self.db.run_script(script, Default::default(), ScriptMutability::Mutable);
+        match self.db.run_script(script, Default::default(), ScriptMutability::Mutable) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("conflicts with an existing one") || msg.contains("already exists") {
+                    Ok(())
+                } else if msg.contains("non-existent field") || msg.contains("mismatch") {
+                    println!("   {} Recreating schema for {}", "🔄".yellow(), name);
+                    let _ = self.db.run_script(&format!("::remove {}", name), Default::default(), ScriptMutability::Mutable);
+                    self.db.run_script(script, Default::default(), ScriptMutability::Mutable)
+                        .map(|_| ())
+                        .map_err(|e| SlyError::Database(format!("Failed to recreate {}: {}", name, e)))
                 } else {
-                    eprintln!("Database initialization error ({}): {}", name, e);
+                    println!("   {} Schema error for {}: {}", "⚠️".red(), name, e);
+                    Err(SlyError::Database(format!("Schema error {}: {}", name, e)))
                 }
             }
         }
-        Ok(())
     }
 
     pub fn run_script(&self, script: &str, params: BTreeMap<String, DataValue>, mutability: ScriptMutability) -> Result<cozo::NamedRows> {

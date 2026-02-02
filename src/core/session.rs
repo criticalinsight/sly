@@ -1,5 +1,6 @@
 use uuid::Uuid;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentSession {
@@ -7,8 +8,9 @@ pub struct AgentSession {
     pub messages: Vec<String>,
     pub depth: usize,
     pub status: SessionStatus,
-    pub snapshots: Vec<Vec<String>>, // Stack of message history snapshots
     pub last_action_result: Option<serde_json::Value>,
+    pub cache_id: Option<String>,
+    pub metadata: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -28,28 +30,12 @@ impl AgentSession {
             messages: vec![initial_prompt],
             depth: 0,
             status: SessionStatus::Idle,
-            snapshots: Vec::new(),
             last_action_result: None,
+            cache_id: None,
+            metadata: HashMap::new(),
         }
     }
 
-    pub fn checkpoint(mut self) -> Self {
-        self.snapshots.push(self.messages.clone());
-        self
-    }
-
-    pub fn with_snapshot(mut self, history: Vec<String>) -> Self {
-        self.snapshots.push(history);
-        self
-    }
-
-    pub fn rollback(mut self) -> Self {
-        if let Some(history) = self.snapshots.pop() {
-            self.messages = history;
-        }
-        self.status = SessionStatus::Idle; // Reset status on rollback
-        self
-    }
 
     pub fn with_message(mut self, msg: String) -> Self {
         self.messages.push(msg);

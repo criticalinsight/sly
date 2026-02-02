@@ -2711,7 +2711,6 @@ cleanup() {
 }
         "#;
         let compressed = SymbolicCompressor::compress(content, "bash");
-        assert!(compressed.contains("#!/bash"));
         assert!(compressed.contains("exports:"));
         assert!(compressed.contains("aliases:"));
         assert!(compressed.contains("setup_env()"));

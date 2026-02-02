@@ -47,6 +47,7 @@ pub async fn get_tool_definitions(metadata: &[McpToolMetadata]) -> String {
         Box::new(crate::mcp::browser::BrowserMcp),
         Box::new(crate::mcp::cloud::CloudMcp),
         Box::new(crate::mcp::fetch::FetchMcp),
+        Box::new(crate::mcp::system::SystemMcp),
     ];
 
     for tool in &local_tools {
@@ -54,17 +55,22 @@ pub async fn get_tool_definitions(metadata: &[McpToolMetadata]) -> String {
         native_defs.push_str("\n");
     }
 
+    // Meta-Tools (Hardcoded)
     native_defs.push_str(r#"
 <tool_def>
     <name>ukr_search</name>
     <description>Universal Knowledge Retrieval: Broadcasts a search query to all connected MCP servers that expose search-like capabilities.</description>
     <parameters>
-        <parameter>
-            <name>query</name>
-            <type>string</type>
-            <description>The search term or topic</description>
-            <required>true</required>
-        </parameter>
+        {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search term or topic"
+                }
+            },
+            "required": ["query"]
+        }
     </parameters>
 </tool_def>
 "#);
@@ -106,6 +112,7 @@ pub async fn call_mcp_tool(
         Box::new(crate::mcp::browser::BrowserMcp),
         Box::new(crate::mcp::cloud::CloudMcp),
         Box::new(crate::mcp::fetch::FetchMcp),
+        Box::new(crate::mcp::system::SystemMcp),
     ];
 
     for tool in &local_tools {

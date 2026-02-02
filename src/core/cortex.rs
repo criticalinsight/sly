@@ -168,7 +168,7 @@ impl Cortex {
         Ok(cache_id)
     }
 
-    pub async fn generate(&self, prompt: &str, _level: ThinkingLevel) -> Result<String> {
+    pub async fn generate(&self, messages: Vec<serde_json::Value>, _level: ThinkingLevel, cache_id: Option<String>) -> Result<String> {
         let model = "models/gemini-2.5-flash";
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/{}:generateContent",
@@ -177,12 +177,37 @@ impl Cortex {
 
         let dynamic_prompt = format!("{}\n\n## ACTIVE CONTEXT\n* **Tech Stack:** {}\n", SYSTEM_PROMPT, self.tech_stack);
         
-        let payload = json!({
+        let mut payload = json!({
             "systemInstruction": {
                 "parts": [{ "text": dynamic_prompt }]
             },
-            "contents": [{"parts": [{"text": prompt}]}]
+            "contents": messages
         });
+
+        if let Some(cid) = cache_id {
+            payload["cachedContent"] = json!(cid);
+        }
+
+        let mut generation_config = json!({});
+        match _level {
+            ThinkingLevel::Low => {
+                generation_config["maxOutputTokens"] = json!(2048);
+                generation_config["temperature"] = json!(0.3);
+            }
+            ThinkingLevel::High => {
+                generation_config["maxOutputTokens"] = json!(8192);
+                generation_config["temperature"] = json!(0.7);
+            }
+            ThinkingLevel::Minimal => {
+                generation_config["maxOutputTokens"] = json!(1024);
+                generation_config["temperature"] = json!(0.1);
+            }
+            ThinkingLevel::Automatic => {
+                generation_config["maxOutputTokens"] = json!(4096);
+                generation_config["temperature"] = json!(0.5);
+            }
+        }
+        payload["generationConfig"] = generation_config;
 
         let res = self.client.post(&url)
             .header("x-goog-api-key", &self.api_key)
@@ -200,7 +225,7 @@ impl Cortex {
         extract_text(&body).ok_or_else(|| SlyError::Cortex("Gemini 2.5 response parsing failed".to_string()))
     }
 
-    pub async fn generate_stream(&self, prompt: &str, _level: ThinkingLevel) -> Result<impl futures::Stream<Item = Result<String>>> {
+    pub async fn generate_stream(&self, messages: Vec<serde_json::Value>, _level: ThinkingLevel, cache_id: Option<String>) -> Result<impl futures::Stream<Item = Result<String>>> {
         let model = "models/gemini-2.5-flash"; 
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/{}:streamGenerateContent",
@@ -209,10 +234,35 @@ impl Cortex {
 
         let dynamic_prompt = format!("{}\n\n## ACTIVE CONTEXT\n* **Tech Stack:** {}\n", SYSTEM_PROMPT, self.tech_stack);
         
-        let payload = json!({
+        let mut payload = json!({
             "systemInstruction": { "parts": [{ "text": dynamic_prompt }] },
-            "contents": [{"parts": [{"text": prompt}]}]
+            "contents": messages
         });
+
+        if let Some(cid) = cache_id {
+            payload["cachedContent"] = json!(cid);
+        }
+
+        let mut generation_config = json!({});
+        match _level {
+            ThinkingLevel::Low => {
+                generation_config["maxOutputTokens"] = json!(2048);
+                generation_config["temperature"] = json!(0.3);
+            }
+            ThinkingLevel::High => {
+                generation_config["maxOutputTokens"] = json!(8192);
+                generation_config["temperature"] = json!(0.7);
+            }
+            ThinkingLevel::Minimal => {
+                generation_config["maxOutputTokens"] = json!(1024);
+                generation_config["temperature"] = json!(0.1);
+            }
+            ThinkingLevel::Automatic => {
+                generation_config["maxOutputTokens"] = json!(4096);
+                generation_config["temperature"] = json!(0.5);
+            }
+        }
+        payload["generationConfig"] = generation_config;
 
         let res = self.client.post(&url)
             .header("x-goog-api-key", &self.api_key)
@@ -295,7 +345,11 @@ mod tests {
         }
         let config = SlyConfig::default();
         let cortex = Cortex::new(config, "rust".to_string())?;
-        let res = cortex.generate("Write a rust hello world function.", ThinkingLevel::Low).await?;
+        let history = vec![serde_json::json!({
+            "role": "user",
+            "parts": [{ "text": "Write a rust hello world function." }]
+        })];
+        let res = cortex.generate(history, ThinkingLevel::Low, None).await?;
         assert!(res.contains("fn main") || res.contains("println!"));
         Ok(())
     }

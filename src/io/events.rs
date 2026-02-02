@@ -1,6 +1,6 @@
 use notify::Event;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Impulse {
     InitiateSession(String),
     ThinkStep(String),
@@ -8,6 +8,7 @@ pub enum Impulse {
     FileSystemEvent(Event),
     ThoughtStream(String, String),
     Undo(String), // session_id
+    ExecuteWorkflow(String),
     Terminate,
     SystemInterrupt,
     Error(String),

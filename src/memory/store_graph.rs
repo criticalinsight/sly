@@ -4,7 +4,7 @@ use crate::error::{Result, SlyError};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{HashMap, BTreeMap};
 use cozo::{DataValue, ScriptMutability};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -422,15 +422,21 @@ impl Memory {
     pub async fn create_session(&self, session: &crate::core::session::AgentSession) -> Result<()> {
         let last_result = session.last_action_result.clone().unwrap_or(serde_json::Value::Null);
         let script = "
-            ?[id, status, depth, input, last_result, created_at] <- [[$id, $status, $depth, $input, $last_result, $now]]
-            :put sessions { id => status, depth, input, last_result, created_at }
+            ?[id, status, depth, input, last_result, cache_id, metadata, created_at] <- [[$id, $status, $depth, $input, $last_result, $cache_id, $metadata, $now]]
+            :put sessions_v6 { id => status, depth, input, last_result, cache_id, metadata, created_at }
         ";
         let mut params = BTreeMap::new();
         params.insert("id".to_string(), DataValue::from(session.id.clone()));
         params.insert("status".to_string(), DataValue::from(format!("{:?}", session.status)));
         params.insert("depth".to_string(), DataValue::from(session.depth as i64));
         params.insert("input".to_string(), DataValue::from(session.messages.first().cloned().unwrap_or_default()));
-        params.insert("last_result".to_string(), DataValue::from(last_result));
+        params.insert("last_result".to_string(), DataValue::from(serde_json::to_string(&last_result).unwrap_or_default()));
+        let cid_dv = match session.cache_id.clone() {
+            Some(cid) => DataValue::from(cid),
+            None => DataValue::Null,
+        };
+        params.insert("cache_id".to_string(), cid_dv);
+        params.insert("metadata".to_string(), DataValue::from(serde_json::to_string(&session.metadata).unwrap_or_default()));
         params.insert("now".to_string(), DataValue::from(chrono::Utc::now().timestamp()));
 
         self.backend.run_script(script, params, ScriptMutability::Mutable)?;
@@ -444,15 +450,21 @@ impl Memory {
     pub async fn update_session(&self, session: &crate::core::session::AgentSession) -> Result<()> {
         let last_result = session.last_action_result.clone().unwrap_or(serde_json::Value::Null);
         let script = "
-            ?[id, status, depth, input, last_result, created_at] := *sessions{id, input, created_at}, 
-                id = $id, status = $status, depth = $depth, last_result = $last_result
-            :put sessions { id => status, depth, input, last_result, created_at }
+            ?[id, status, depth, input, last_result, cache_id, metadata, created_at] := *sessions_v6{id, input, created_at}, 
+                id = $id, status = $status, depth = $depth, last_result = $last_result, cache_id = $cache_id, metadata = $metadata
+            :put sessions_v6 { id => status, depth, input, last_result, cache_id, metadata, created_at }
         ";
         let mut params = BTreeMap::new();
         params.insert("id".to_string(), DataValue::from(session.id.clone()));
         params.insert("status".to_string(), DataValue::from(format!("{:?}", session.status)));
         params.insert("depth".to_string(), DataValue::from(session.depth as i64));
-        params.insert("last_result".to_string(), DataValue::from(last_result));
+        params.insert("last_result".to_string(), DataValue::from(serde_json::to_string(&last_result).unwrap_or_default()));
+        let cid_dv = match session.cache_id.clone() {
+            Some(cid) => DataValue::from(cid),
+            None => DataValue::Null,
+        };
+        params.insert("cache_id".to_string(), cid_dv);
+        params.insert("metadata".to_string(), DataValue::from(serde_json::to_string(&session.metadata).unwrap_or_default()));
 
         self.backend.run_script(script, params, ScriptMutability::Mutable)?;
 
@@ -460,19 +472,66 @@ impl Memory {
             self.add_session_message(&session.id, i, msg).await?;
         }
 
-        // Sync Snapshots (Atomic Resilience Phase 8)
+        Ok(())
+    }
+
+    pub async fn checkpoint_session(&self, session: &crate::core::session::AgentSession) -> Result<()> {
+        let script = "?[max_idx] := *session_snapshots{session_id: $id, snapshot_index: max_idx} :limit 1";
+        let mut params = BTreeMap::new();
+        params.insert("id".to_string(), DataValue::from(session.id.clone()));
+        let res = self.backend.run_script(script, params, ScriptMutability::Immutable)?;
+        
+        let next_idx = if let Some(row) = res.rows.first() {
+            if let Some(DataValue::Num(n)) = row.first() {
+                let current_idx: i64 = format!("{:?}", n).parse().unwrap_or(0);
+                current_idx + 1
+            } else { 0 }
+        } else { 0 };
+
         let snap_script = "
             ?[session_id, snapshot_index, history] <- [[$session_id, $snapshot_index, $history]]
-            :put session_snapshots { session_id, snapshot_index => history }
+            :create session_snapshots { session_id, snapshot_index => history }
         ";
-        for (i, history) in session.snapshots.iter().enumerate() {
-            let mut snap_params = BTreeMap::new();
-            snap_params.insert("session_id".to_string(), DataValue::from(session.id.clone()));
-            snap_params.insert("snapshot_index".to_string(), DataValue::from(i as i64));
-            snap_params.insert("history".to_string(), DataValue::from(serde_json::to_value(history).unwrap_or_default()));
-            self.backend.run_script(snap_script, snap_params, ScriptMutability::Mutable)?;
-        }
+        let mut snap_params = BTreeMap::new();
+        snap_params.insert("session_id".to_string(), DataValue::from(session.id.clone()));
+        snap_params.insert("snapshot_index".to_string(), DataValue::from(next_idx));
+        snap_params.insert("history".to_string(), DataValue::from(serde_json::to_string(&session.messages).unwrap_or_default()));
+        self.backend.run_script(snap_script, snap_params, ScriptMutability::Mutable)?;
         Ok(())
+    }
+
+    pub async fn rollback_session(&self, session_id: &str) -> Result<Option<crate::core::session::AgentSession>> {
+        let mut session = match self.get_session(session_id).await? {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+
+        let script = "?[idx, history] := *session_snapshots{session_id: $id, snapshot_index: idx, history} :sort idx desc :limit 1";
+        let mut params = BTreeMap::new();
+        params.insert("id".to_string(), DataValue::from(session_id.to_string()));
+        let res = self.backend.run_script(script, params, ScriptMutability::Immutable)?;
+        
+        if let Some(row) = res.rows.first() {
+            if let Some(DataValue::Json(h)) = row.get(1) {
+                if let Ok(history) = serde_json::from_value::<Vec<String>>(h.0.clone()) {
+                    session.messages = history;
+                    session.status = crate::core::session::SessionStatus::Idle;
+                    
+                    // Remove the snapshot we just rolled back to (optional, but consistent with 'pop')
+                    if let Some(DataValue::Num(idx)) = row.first() {
+                        let del_script = "?[session_id, snapshot_index] := *session_snapshots{session_id, snapshot_index}, session_id = $id, snapshot_index = $idx :rm session_snapshots { session_id, snapshot_index }";
+                        let mut del_params = BTreeMap::new();
+                        del_params.insert("id".to_string(), DataValue::from(session_id.to_string()));
+                        del_params.insert("idx".to_string(), DataValue::Num(idx.clone()));
+                        self.backend.run_script(del_script, del_params, ScriptMutability::Mutable)?;
+                    }
+                    
+                    self.update_session(&session).await?;
+                    return Ok(Some(session));
+                }
+            }
+        }
+        Ok(None)
     }
 
     async fn add_session_message(&self, session_id: &str, index: usize, content: &str) -> Result<()> {
@@ -490,7 +549,7 @@ impl Memory {
     }
 
     pub async fn get_session(&self, id: &str) -> Result<Option<crate::core::session::AgentSession>> {
-        let script = "?[status, depth, input, last_result] := *sessions{id: $id, status, depth, input, last_result}";
+        let script = "?[status, depth, input, last_result, cache_id, metadata] := *sessions_v6{id: $id, status, depth, input, last_result, cache_id, metadata}";
         let mut params = BTreeMap::new();
         params.insert("id".to_string(), DataValue::from(id.to_string()));
 
@@ -504,10 +563,18 @@ impl Memory {
                 _ => ("Idle", 0),
             };
             let last_action_result = match row.get(3) {
-                Some(DataValue::Json(j)) => {
-                    if j.0.is_null() { None } else { Some(j.0.clone()) }
+                Some(DataValue::Str(s)) => {
+                    serde_json::from_str(s).ok()
                 }
                 _ => None,
+            };
+            let cache_id = match row.get(4) {
+                Some(DataValue::Str(s)) => Some(s.to_string()),
+                _ => None,
+            };
+            let metadata = match row.get(5) {
+                Some(DataValue::Str(s)) => serde_json::from_str(s).unwrap_or_default(),
+                _ => std::collections::HashMap::new(),
             };
             let status = match status_str {
                 "Thinking" => crate::core::session::SessionStatus::Thinking,
@@ -529,28 +596,14 @@ impl Memory {
                 }
             }
 
-            // Get Snapshots (Atomic Resilience Phase 8)
-            let snap_script = "?[snapshot_index, history] := *session_snapshots{session_id: $id, snapshot_index, history} :sort snapshot_index";
-            let mut snap_params = BTreeMap::new();
-            snap_params.insert("id".to_string(), DataValue::from(id.to_string()));
-            let snap_res = self.backend.run_script(snap_script, snap_params, ScriptMutability::Immutable)?;
-            
-            let mut snapshots = Vec::new();
-            for s_row in snap_res.rows {
-                if let Some(DataValue::Json(h)) = s_row.get(1) {
-                    if let Ok(history) = serde_json::from_value::<Vec<String>>(h.0.clone()) {
-                        snapshots.push(history);
-                    }
-                }
-            }
-
             Ok(Some(crate::core::session::AgentSession {
                 id: id.to_string(),
                 messages,
                 depth,
                 status,
-                snapshots,
                 last_action_result,
+                cache_id,
+                metadata,
             }))
         } else {
             Ok(None)
@@ -677,7 +730,9 @@ mod tests {
             messages: vec!["Hello".to_string()],
             depth: 1,
             status: crate::core::session::SessionStatus::Idle,
-            snapshots: vec![],
+            last_action_result: None,
+            cache_id: None,
+            metadata: std::collections::HashMap::new(),
         };
         
         mem.create_session(&session).await?;

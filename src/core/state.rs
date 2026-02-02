@@ -84,7 +84,8 @@ pub struct GlobalState {
     pub cortex: Arc<Cortex>,
     pub mcp_clients: Arc<tokio::sync::Mutex<HashMap<String, Arc<crate::mcp::client::McpClient>>>>,
     pub metadata_cache: Arc<tokio::sync::Mutex<Vec<McpToolMetadata>>>,
-    pub telegram: Option<Arc<tokio::sync::Mutex<crate::io::telegram::TelegramClient>>>,
+    pub bus: crate::core::bus::ArcBus,
+    pub io: Arc<tokio::sync::Mutex<Box<dyn crate::io::interface::AgentIO>>>,
 }
 
 impl GlobalState {
@@ -94,7 +95,8 @@ impl GlobalState {
         memory_raw: Arc<crate::memory::Memory>,
         overlay: Arc<OverlayFS>,
         cortex: Arc<Cortex>,
-        telegram: Option<Arc<tokio::sync::Mutex<crate::io::telegram::TelegramClient>>>,
+        bus: crate::core::bus::ArcBus,
+        io: Box<dyn crate::io::interface::AgentIO>,
     ) -> Self {
         Self {
             config: Arc::new(config),
@@ -104,7 +106,8 @@ impl GlobalState {
             cortex,
             mcp_clients: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             metadata_cache: Arc::new(tokio::sync::Mutex::new(Vec::new())),
-            telegram,
+            bus,
+            io: Arc::new(tokio::sync::Mutex::new(io)),
         }
     }
 
@@ -113,7 +116,9 @@ impl GlobalState {
         let memory_raw = Arc::new(crate::memory::Memory::new_transient().await?);
         let overlay = Arc::new(OverlayFS::new(&std::env::current_dir().map_err(|e| SlyError::Io(e))?, "transient")?);
         let cortex = Arc::new(Cortex::new(config.clone(), "rust".to_string())?);
-        Ok(Self::new(config, memory_raw.clone() as Arc<dyn MemoryStore>, memory_raw, overlay, cortex, None))
+        let bus = Arc::new(crate::core::bus::EventBus::new());
+        let io = Box::new(crate::io::cli::CliAdapter::new("transient_session"));
+        Ok(Self::new(config, memory_raw.clone() as Arc<dyn MemoryStore>, memory_raw, overlay, cortex, bus, io))
     }
 
     #[cfg(test)]
@@ -125,7 +130,9 @@ impl GlobalState {
         let memory_raw = Arc::new(crate::memory::Memory::new_light(path, false).await?);
         let overlay = Arc::new(OverlayFS::new(std::path::Path::new(path), "test-overlay").map_err(|e| SlyError::Overlay(e.to_string()))?);
         let cortex = Arc::new(Cortex::new(config.clone(), "rust".to_string())?);
-        Ok(Self::new(config, memory_raw.clone() as Arc<dyn MemoryStore>, memory_raw, overlay, cortex, None))
+        let bus = Arc::new(crate::core::bus::EventBus::new());
+        let io = Box::new(crate::io::cli::CliAdapter::new("test_session"));
+        Ok(Self::new(config, memory_raw.clone() as Arc<dyn MemoryStore>, memory_raw, overlay, cortex, bus, io))
     }
 }
 

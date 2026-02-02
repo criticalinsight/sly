@@ -6,6 +6,7 @@ use rayon::prelude::*;
 pub mod scanner;
 pub mod extractor;
 pub mod compressor;
+pub mod deduplicator;
 
 use scanner::{Scanner, FileValue};
 use extractor::Extractor;
@@ -76,6 +77,22 @@ async fn commit_nodes(memory: &Memory, nodes: Vec<GraphNode>, file: &FileValue) 
     }
     memory.update_sync_status(path_str, &file.hash).await?;
     Ok(())
+}
+
+pub async fn expand_symbol(memory: &Memory, path: &str, symbol: Option<&str>) -> Result<String> {
+    let nodes = memory.get_symbols_for_path(path).await?;
+    if nodes.is_empty() {
+        return Ok(format!("No symbols found for path: {}", path));
+    }
+
+    if let Some(sym) = symbol {
+        if let Some(node) = nodes.iter().find(|n| n.id.contains(sym)) {
+            return Ok(node.content.clone());
+        }
+    }
+
+    // Default to symbolic overview
+    Ok(SymbolicCompressor::compress_nodes(&nodes))
 }
 
 #[cfg(test)]

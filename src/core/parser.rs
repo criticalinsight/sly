@@ -8,6 +8,7 @@ pub enum AgentAction {
     WriteFile { path: String, content: String },
     ExecShell { command: String, context: String },
     QueryMemory { query: String, strategy: Option<String> },
+    SearchCode { query: String, path_filter: Option<String> },
 
     CommitOverlay { message: String },
     CallTool { tool_name: String, arguments: Value },
@@ -17,7 +18,7 @@ pub enum AgentAction {
     /// Use when detailed implementation context is needed
     Expand { path: String, symbol: Option<String> },
     
-    // Fallback for straight text or analysis
+    FinalResponse { title: String, summary: String },
     Answer { text: String },
 }
 

@@ -23,6 +23,13 @@ impl ImpulseInterpreter {
             Impulse::FileSystemEvent(event) => handle_fs_event(event, state.clone()).await,
             Impulse::ThoughtStream(session_id, query) => handle_thought_stream(session_id, query, state.clone()).await,
             Impulse::Undo(session_id) => handle_undo(session_id, state.clone()).await,
+            Impulse::ExecuteWorkflow(name) => {
+                let s = state.clone();
+                tokio::spawn(async move {
+                    let _ = crate::core::workflow::execute_workflow(&name, s).await;
+                });
+                Ok(())
+            }
             Impulse::Terminate | Impulse::SystemInterrupt => handle_shutdown(state.clone()).await,
             Impulse::Error(e) => {
                 eprintln!("{} System Error Impulse: {}", "⚠️".red(), e);
@@ -48,12 +55,7 @@ async fn handle_initiate_session(input: String, state: Arc<GlobalState>) -> Resu
     
     agent::step_agent_session(
         session_id, 
-        state.memory_raw.clone(),
-        state.cortex.clone(),
-        state.mcp_clients.clone(),
-        state.metadata_cache.clone(),
-        state.overlay.clone(),
-        state.telegram.clone(),
+        state.clone(),
         state.config.max_autonomous_loops
     ).await;
     Ok(())
@@ -62,12 +64,7 @@ async fn handle_initiate_session(input: String, state: Arc<GlobalState>) -> Resu
 async fn handle_think(session_id: String, state: Arc<GlobalState>) -> Result<()> {
     agent::step_agent_session(
         session_id, 
-        state.memory_raw.clone(),
-        state.cortex.clone(),
-        state.mcp_clients.clone(),
-        state.metadata_cache.clone(),
-        state.overlay.clone(),
-        state.telegram.clone(),
+        state.clone(),
         state.config.max_autonomous_loops
     ).await;
     Ok(())
@@ -80,12 +77,7 @@ async fn handle_observe(session_id: String, observation: String, state: Arc<Glob
         
         agent::step_agent_session(
             session_id, 
-            state.memory_raw.clone(),
-            state.cortex.clone(),
-            state.mcp_clients.clone(),
-            state.metadata_cache.clone(),
-            state.overlay.clone(),
-            state.telegram.clone(),
+            state.clone(),
             state.config.max_autonomous_loops
         ).await;
     }
@@ -93,10 +85,8 @@ async fn handle_observe(session_id: String, observation: String, state: Arc<Glob
 }
 
 async fn handle_undo(session_id: String, state: Arc<GlobalState>) -> Result<()> {
-    if let Ok(Some(session)) = state.memory_raw.get_session(&session_id).await {
-        println!("{} [Undo] Rolling back session {}", "⏪".yellow(), session_id);
-        let session = session.rollback();
-        state.memory_raw.update_session(&session).await?;
+    println!("{} [Undo] Rolling back session {}", "⏪".yellow(), session_id);
+    if let Ok(Some(_)) = state.memory_raw.rollback_session(&session_id).await {
         
         // Also rollback the OverlayFS to clean up speculative writes
         state.overlay.rollback().map_err(|e| crate::error::SlyError::Overlay(e.to_string()))?;
@@ -120,11 +110,7 @@ async fn handle_thought_stream(session_id: String, query: String, state: Arc<Glo
         let _ = agent::step_thought_analysis(
             session_id,
             query,
-            state.memory_raw.clone(),
-            state.cortex.clone(),
-            state.mcp_clients.clone(),
-            state.metadata_cache.clone(),
-            state.overlay.clone()
+            state.clone(),
         ).await;
     });
     Ok(())
