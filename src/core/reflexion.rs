@@ -1,7 +1,6 @@
 use crate::error::Result;
 use std::sync::Arc;
 use colored::*;
-use crate::memory::MemoryStore;
 
 pub async fn attempt_repair(
     session_id: &str,

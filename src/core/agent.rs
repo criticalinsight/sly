@@ -1,5 +1,5 @@
 use crate::core::parser::{parse_action, AgentAction};
-use crate::mcp::registry::{self, McpToolMetadata};
+use crate::mcp::registry;
 use colored::*;
 use std::sync::Arc;
 use crate::memory::MemoryStore;
@@ -181,7 +181,7 @@ pub async fn step_thought_analysis(
     query: String,
     state: Arc<crate::core::state::GlobalState>,
 ) {
-    let mut cache = state.metadata_cache.lock().await;
+    let cache = state.metadata_cache.lock().await;
     if cache.is_empty() {
         // *cache = registry::get_all_tool_metadata(&state.mcp_clients).await;
     }

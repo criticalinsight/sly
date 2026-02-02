@@ -115,7 +115,7 @@ async fn main() -> Result<()> {
         }
     };
 
-    let (priority_tx, priority_rx) = mpsc::channel(100);
+    let (_priority_tx, priority_rx) = mpsc::channel(100);
     let (background_tx, background_rx) = mpsc::channel(1000);
 
     {
