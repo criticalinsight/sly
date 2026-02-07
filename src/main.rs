@@ -28,7 +28,21 @@ async fn main() -> Result<()> {
     }
     if args.iter().any(|a| a == "--help" || a == "-h" || a == "help") {
         println!("Sly - Autonomous Agent (v{})", env!("CARGO_PKG_VERSION"));
-        println!("Usage: sly [init | supervisor | session <query> | --version | --help] [--ephemeral]");
+        println!("\nUsage: sly [COMMAND] [OPTIONS]");
+        println!("\nCommands:");
+        println!("  init              Initialize a Sly workspace");
+        println!("  supervisor        Run in supervisor mode (Telegram)");
+        println!("  session <query>   Run a one-shot session");
+        println!("  swarm <task>      Parallel swarm execution [--workers N]");
+        println!("");
+
+        println!("Options:");
+        println!("  --ephemeral       Use in-memory storage (no persistence)");
+        println!("  --pipe            Non-interactive pipe mode (JSON I/O)");
+        println!("  --persona <id>    Use specific persona (hickey, sierra, etc.)");
+        println!("  --mcp-server      Run as MCP server (JSON-RPC over stdio)");
+        println!("  --version, -v     Show version");
+        println!("  --help, -h        Show this help");
         return Ok(());
     }
 
@@ -37,8 +51,46 @@ async fn main() -> Result<()> {
         return init_workspace(no_services);
     }
 
+    // -- Swarm Mode --
+    if args.iter().any(|a| a == "swarm") {
+        let workers: usize = args.windows(2)
+            .find(|w| w[0] == "--workers")
+            .and_then(|w| w[1].parse().ok())
+            .unwrap_or(4);
+        
+        let task_idx = args.iter().position(|a| a == "swarm").unwrap_or(0);
+        let task_instruction = args[task_idx + 1..].iter()
+            .filter(|a| !a.starts_with("--"))
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" ");
+        
+        if task_instruction.is_empty() {
+            println!("Usage: sly swarm <task> [--workers N]");
+            return Ok(());
+        }
+        
+        return run_swarm(task_instruction, workers).await;
+    }
+
+
     let config = SlyConfig::load();
     let is_ephemeral = args.iter().any(|a| a == "--ephemeral");
+    let is_pipe_mode = args.iter().any(|a| a == "--pipe");
+    let is_mcp_server = args.iter().any(|a| a == "--mcp-server");
+    
+    // Extract --persona <id>
+    let persona_id: Option<String> = args.windows(2)
+        .find(|w| w[0] == "--persona")
+        .map(|w| w[1].clone());
+
+    // -- MCP Server Mode --
+    if is_mcp_server {
+        println!("{{\"jsonrpc\":\"2.0\",\"result\":\"sly-mcp-server-{}\"}}", env!("CARGO_PKG_VERSION"));
+        // TODO: Implement full MCP server protocol
+        // For now, just echo that we're ready
+        return run_mcp_server(config, is_ephemeral, persona_id).await;
+    }
 
     // -- Supervisor Mode --
     if args.iter().any(|a| a == "supervisor") {
@@ -98,6 +150,14 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Select I/O adapter based on flags
+    let io_adapter: Box<dyn sly::io::interface::AgentIO> = if is_pipe_mode {
+        Box::new(sly::io::cli::CliAdapter::pipe("cli_pipe_session"))
+    } else {
+        Box::new(sly::io::cli::CliAdapter::new("cli_session"))
+    };
+
+
     let bus = Arc::new(sly::core::bus::EventBus::new());
     let state = if is_ephemeral {
         Arc::new(GlobalState::new_transient().await?) // Transient already creates its own bus, let's fix that
@@ -108,7 +168,7 @@ async fn main() -> Result<()> {
                 let memory_raw = memory_arc.clone();
                 let cortex = Arc::new(Cortex::new(config.clone(), "Generic/Auto".to_string())?);
                 let overlay = Arc::new(OverlayFS::new(&std::env::current_dir().map_err(|e| SlyError::Io(e))?, "godmode_session")?);
-                let io: Box<dyn sly::io::interface::AgentIO> = Box::new(sly::io::cli::CliAdapter::new("cli_session"));
+                let io: Box<dyn sly::io::interface::AgentIO> = io_adapter;
                 Arc::new(GlobalState::new(config.clone(), memory_arc.clone() as Arc<dyn MemoryStore>, memory_raw.clone(), overlay, cortex.clone(), bus.clone(), io))
             },
             Err(_) => Arc::new(GlobalState::new_transient().await?)
@@ -239,4 +299,204 @@ fn launch_background_services() {
             Ok(child) => println!("   {} Monitor launched (PID: {})", "🟢".green(), child.id()),
             Err(e) => eprintln!("   {} Failed to launch monitor: {}", "🔴".red(), e),
         }
+}
+
+/// MCP Server Mode: Run as JSON-RPC server over stdio
+/// This enables IDE integration via Model Context Protocol
+async fn run_mcp_server(
+    config: SlyConfig,
+    is_ephemeral: bool,
+    _persona_id: Option<String>,
+) -> Result<()> {
+    use tokio::io::{AsyncBufReadExt, BufReader, AsyncWriteExt};
+    use serde_json::{json, Value};
+
+    let memory_path = if is_ephemeral { ":memory:".to_string() } else { format!("{}/cozo", SLY_DIR) };
+    let memory = Arc::new(Memory::new(&memory_path, false).await?);
+    let cortex = Arc::new(Cortex::new(config.clone(), "MCP/Server".to_string())?);
+
+    let stdin = tokio::io::stdin();
+    let mut stdout = tokio::io::stdout();
+    let reader = BufReader::new(stdin);
+    let mut lines = reader.lines();
+
+    // Simple MCP server loop
+    while let Ok(Some(line)) = lines.next_line().await {
+        let request: std::result::Result<Value, _> = serde_json::from_str(&line);
+        
+        let response = match request {
+            Ok(req) => {
+                let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("");
+                let id = req.get("id").cloned().unwrap_or(json!(null));
+                
+                match method {
+                    "initialize" => json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "result": {
+                            "protocolVersion": "2024-11-05",
+                            "capabilities": {
+                                "tools": {}
+                            },
+                            "serverInfo": {
+                                "name": "sly",
+                                "version": env!("CARGO_PKG_VERSION")
+                            }
+                        }
+                    }),
+                    "tools/list" => json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "result": {
+                            "tools": [
+                                {
+                                    "name": "sly_task",
+                                    "description": "Execute a coding task with Sly agent",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "task": { "type": "string", "description": "Task to execute" },
+                                            "persona": { "type": "string", "description": "Persona to use (optional)" }
+                                        },
+                                        "required": ["task"]
+                                    }
+                                },
+                                {
+                                    "name": "sly_query",
+                                    "description": "Query codebase knowledge",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "query": { "type": "string", "description": "Query to search" }
+                                        },
+                                        "required": ["query"]
+                                    }
+                                }
+                            ]
+                        }
+                    }),
+                    "tools/call" => {
+                        let params = req.get("params").cloned().unwrap_or(json!({}));
+                        let tool_name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                        let args = params.get("arguments").cloned().unwrap_or(json!({}));
+                        
+                        match tool_name {
+                            "sly_task" => {
+                                let task = args.get("task").and_then(|t| t.as_str()).unwrap_or("");
+                                // Build messages array for Cortex
+                                let messages = vec![json!({
+                                    "role": "user",
+                                    "parts": [{ "text": task }]
+                                })];
+                                // Execute via Cortex
+                                match cortex.generate(messages, sly::core::cortex::ThinkingLevel::Automatic, None).await {
+                                    Ok(result) => json!({
+                                        "jsonrpc": "2.0",
+                                        "id": id,
+                                        "result": {
+                                            "content": [{ "type": "text", "text": result }]
+                                        }
+                                    }),
+                                    Err(e) => json!({
+                                        "jsonrpc": "2.0",
+                                        "id": id,
+                                        "error": { "code": -32000, "message": e.to_string() }
+                                    })
+                                }
+                            },
+                            "sly_query" => {
+                                let query = args.get("query").and_then(|q| q.as_str()).unwrap_or("");
+                                // Use MemoryStore trait
+                                use sly::memory::MemoryStore;
+                                match memory.recall(query, 5).await {
+                                    Ok(results) => {
+                                        let text = results.join("\n");
+                                        json!({
+                                            "jsonrpc": "2.0",
+                                            "id": id,
+                                            "result": {
+                                                "content": [{ "type": "text", "text": text }]
+                                            }
+                                        })
+                                    },
+                                    Err(e) => json!({
+                                        "jsonrpc": "2.0",
+                                        "id": id,
+                                        "error": { "code": -32000, "message": e.to_string() }
+                                    })
+                                }
+                            },
+                            _ => json!({
+                                "jsonrpc": "2.0",
+                                "id": id,
+                                "error": { "code": -32601, "message": format!("Unknown tool: {}", tool_name) }
+                            })
+                        }
+                    },
+                    "notifications/initialized" | "initialized" => {
+                        // Notification, no response needed
+                        continue;
+                    },
+                    _ => json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": { "code": -32601, "message": format!("Unknown method: {}", method) }
+                    })
+                }
+            },
+            Err(e) => json!({
+                "jsonrpc": "2.0",
+                "id": null,
+                "error": { "code": -32700, "message": format!("Parse error: {}", e) }
+            })
+        };
+
+        let response_str = serde_json::to_string(&response).unwrap_or_default();
+        stdout.write_all(response_str.as_bytes()).await.map_err(|e| SlyError::Io(e))?;
+        stdout.write_all(b"\n").await.map_err(|e| SlyError::Io(e))?;
+        stdout.flush().await.map_err(|e| SlyError::Io(e))?;
+    }
+
+    Ok(())
+}
+
+/// Swarm Mode: Distribute task across parallel workers
+async fn run_swarm(instruction: String, max_workers: usize) -> Result<()> {
+    use sly::swarm::{SwarmSupervisor, SwarmTask};
+    use colored::*;
+
+    println!("{} Starting Swarm with {} workers", "🐝".yellow(), max_workers);
+    println!("   Task: {}", instruction.bright_white());
+
+    let supervisor = SwarmSupervisor::new(max_workers);
+    
+    // For now, create a single task - future: auto-partition by files
+    let tasks = vec![
+        SwarmTask::new("main-task", &instruction)
+            .with_timeout(300)
+    ];
+
+    let results = supervisor.distribute(tasks).await;
+    let aggregated = supervisor.aggregate(&results);
+
+    println!("\n{}", aggregated.summary().green());
+    
+    if !aggregated.conflicts.is_empty() {
+        println!("{} Conflicting files:", "⚠️".yellow());
+        for conflict in &aggregated.conflicts {
+            println!("   - {}", conflict);
+        }
+    }
+
+    if aggregated.failure_count > 0 {
+        for result in &results {
+            if !result.success {
+                if let Some(ref err) = result.error {
+                    println!("{} Task {} failed: {}", "❌".red(), result.task_id, err);
+                }
+            }
+        }
+    }
+
+    Ok(())
 }

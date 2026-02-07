@@ -5,7 +5,7 @@ use std::path::Path;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use crate::io::interface::{AgentIO, InputMessage};
+use crate::io::interface::{AgentIO, InputMessage, IoModality};
 use std::collections::VecDeque;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -282,6 +282,10 @@ impl TelegramClient {
 
 #[async_trait::async_trait]
 impl AgentIO for TelegramClient {
+    fn modality(&self) -> IoModality {
+        IoModality::Telegram
+    }
+
     async fn next_message(&mut self) -> Result<Option<InputMessage>> {
         // 1. Drain buffer first
         if let Some(update) = self.buffer.pop_front() {
@@ -337,7 +341,8 @@ impl TelegramClient {
         Some(InputMessage {
             content,
             sender,
-            session_id: "default_telegram_session".to_string(), // In Phase 5 simplification, we might need dynamic session mapping
+            session_id: "default_telegram_session".to_string(),
+            metadata: None,
         })
     }
 }

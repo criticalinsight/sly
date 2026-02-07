@@ -10,3 +10,5 @@ pub mod agent;
 pub mod interpreter;
 pub mod session;
 pub mod fs;
+pub mod persona;
+pub mod subprocess;

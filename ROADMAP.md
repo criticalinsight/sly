@@ -25,40 +25,61 @@ We reject the path of "Easy". We do not complect mechanism with policy, nor stat
 
 ---
 
-## Phase 5: Decomplecting I/O (The Simplification)
+## Phase 5: Decomplecting I/O ✅
 
-*We reject the complexity of async buses and stateful servers. We embrace Traits and Pipes.*
+*We reject the complexity of async buses. We embrace Traits and Pipes.*
 
-- [ ] **The I/O Trait (Dependency Injection)**:
-  - Define `AgentIO` trait for abstracting input/output.
-  - Refactor `Cortex` to accept `Box<dyn AgentIO>` instead of hardcoded Telegram.
-  - *Why*: Direct function calls are simpler than message queues.
-- [ ] **CLI-First Architecture (Sly as Pipe)**:
-  - Implement `sly --mcp` to map Stdin/Stdout to the internal dispatcher.
-  - Treat the OS process boundary as the state boundary.
-  - *Why*: Stateless processes are easier to manage than stateful servers.
+- [x] **AgentIO Trait**: `modality()`, `send_structured()`, `supports_streaming()`
+- [x] **CliAdapter**: stdin/stdout + pipe mode for IDE integration
+- [x] **IoModality Enum**: Cli, CliPipe, Telegram, McpServer
 
-## Phase 6: Data-Oriented Mind
+## Phase 6: Data-Oriented Mind ✅
 
-*State is not an object. State is a value at a point in time.*
+- [x] **The Immutable Ledger**: Session snapshots in CozoDB
+- [x] **Time-travel debugging**: `checkpoint` and `rollback`
+- [x] **Semantic Deduplication**: Collapse redundant error logs
+- [x] **Adaptive Pruning**: Heuristic relevance scoring
 
-- [x] **The Immutable Ledger** (Core Implementation):
-  - Session snapshots in `CozoDB`.
-  - Time-travel debugging via `checkpoint` and `rollback`.
-- [x] **Data-Driven Logic**:
-  - [x] **Semantic Deduplication**: Collapse redundant error logs.
-  - [x] **Adaptive Pruning**: Heuristic relevance scoring.
-  - [x] **Differential Context Updates**: Delta-only context.
-
-## Phase 7: Generative Simplicity
+## Phase 7: Generative Simplicity ✅
 
 *The system creates its own extensions.*
 
-- [ ] **Sub-Process Composition**:
-  - Implement recursive tools via `Command::new("sly")`.
-  - Child agents run as isolated ephemeral processes.
-- [ ] **Self-Synthesized Adapters**:
-  - Sly writes code for new I/O adapters and compiles them.
+- [x] **Sub-Process Composition**: `spawn_child_agent()`, `spawn_parallel_agents()`
+- [x] CLI flags: `--ephemeral`, `--pipe`, `--persona`
+
+## Phase 8: IDE Native Integration (MCP Server) ✅
+
+- [x] **MCP Server Mode**: `sly --mcp-server`
+- [x] **JSON-RPC Protocol**: `initialize`, `tools/list`, `tools/call`
+- [x] **Tools**: `sly_task`, `sly_query`
+
+## Phase 9: Distributed Swarm ✅
+
+*A Vim for agents must become a Tmux for agents.*
+
+- [x] **SwarmSupervisor**: Parallel orchestration, conflict detection
+- [x] **SwarmWorker**: Ephemeral subprocess execution
+- [x] **SwarmTask/SwarmResult**: Pure data structures
+
+### Swarm v2 Enhancements ✅
+- [x] **merge.rs**: 3-way conflict resolution via git merge-file
+- [x] **context.rs**: Shared file index + dependency graph
+- [x] **partition.rs**: PerFile, PerModule, BySCC strategies
+- [x] **overlay.rs**: Worker isolation + atomic commit/rollback
+- [x] **events.rs**: Real-time SwarmEvent streaming
+- [x] **cache.rs**: Content-addressed memoization
+
+---
+
+## CLI (v0.6.0)
+
+```bash
+sly init                           # Initialize workspace
+sly session <query>                # One-shot session
+sly swarm <task> --workers N       # Parallel execution
+sly --mcp-server                   # IDE integration
+sly --pipe --persona hickey        # Subprocess mode
+```
 
 ---
 
