@@ -98,8 +98,8 @@ pub fn find_json_val(json: &str, key: &str) -> Option<String> {
         let after = &json[idx + pattern.len()..];
         if let Some(colon) = after.find(':') {
             let val_part = &after[colon + 1..].trim();
-            if val_part.starts_with('"') {
-                let (val, _) = extract_json_string(&val_part[1..]);
+            if let Some(stripped) = val_part.strip_prefix('"') {
+                let (val, _) = extract_json_string(stripped);
                 return Some(val);
             }
         }

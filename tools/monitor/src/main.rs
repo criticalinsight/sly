@@ -58,10 +58,10 @@ fn main() -> std::io::Result<()> {
                     if len < current_pos { current_pos = 0; } // Truncated
 
                     if len > current_pos {
-                        if let Err(_) = file.seek(SeekFrom::Start(current_pos)) { continue; }
+                        if file.seek(SeekFrom::Start(current_pos)).is_err() { continue; }
 
                         let mut buffer = vec![0; (len - current_pos) as usize];
-                        if let Ok(_) = file.read_exact(&mut buffer) {
+                        if file.read_exact(&mut buffer).is_ok() {
                              let content = String::from_utf8_lossy(&buffer);
                              for line in content.lines() {
                                  if line.trim().is_empty() { continue; }
@@ -89,7 +89,7 @@ fn main() -> std::io::Result<()> {
 
                                  println!("[{}] {}{}\x1b[0m", file_name, color_code, line);
                                  
-                                 if s.executions > 0 && s.executions % 10 == 0 && is_exec {
+                                 if s.executions > 0 && s.executions.is_multiple_of(10) && is_exec {
                                      println!("--- Stats: Execs: {}, Errors: {} ---", s.executions, s.errors);
                                  }
                              }

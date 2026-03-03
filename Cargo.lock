@@ -26,7 +26,7 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "sly-core"
-version = "0.3.5"
+version = "0.4.0"
 dependencies = [
  "colored",
  "dotenvy",
@@ -108,8 +108,3 @@ name = "windows_x86_64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
-
-[[patch.unused]]
-name = "tao"
-version = "0.34.5"
-source = "git+https://github.com/wojtekmach/tao.git?branch=wm-bundled-activation-policy#ac4e920611d22aaffb1b0ab21206295ffd47f2bf"

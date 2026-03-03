@@ -11,6 +11,12 @@ pub struct CliAdapter {
     pipe_mode: bool,
 }
 
+impl Default for CliAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CliAdapter {
     /// Create a new interactive CLI adapter.
     pub fn new() -> Self {
