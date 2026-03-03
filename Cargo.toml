@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = [
+    "tidewave-core",
+    "tidewave-cli",
+    "src-tauri",
+    "sly-core",
+    "tools/monitor",
+]
+
+[workspace.package]
+version = "0.3.4"
+
+[patch.crates-io]
+# TODO: upstream
+tao = { git = "https://github.com/wojtekmach/tao.git", branch = "wm-bundled-activation-policy" }

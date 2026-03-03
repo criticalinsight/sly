@@ -1,0 +1,70 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Tidewave",
+  "identifier": "ai.tidewave.desktop",
+  "build": {
+    "frontendDist": null
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg", "nsis", "appimage"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/64x64.png",
+      "icons/128x128.png",
+      "icons/256x256.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": ["icons/AppIcon.icon"],
+    "fileAssociations": [
+      {
+        "ext": ["tidewave"],
+        "mimeType": "text/plain",
+        "rank": "Default"
+      }
+    ],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "icons/installer-header.bmp",
+        "sidebarImage": "icons/installer-sidebar.bmp"
+      },
+      "signCommand": "trusted-signing-cli -e https://eus.codesigning.azure.net %1"
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "cli": {
+      "description": "Tidewave App/CLI",
+      "args": [
+        {
+          "name": "port",
+          "description": "Specify the port where Tidewave will be served.",
+          "short": "p",
+          "takesValue": true
+        },
+        {
+          "name": "debug",
+          "description": "Enable debug logging",
+          "short": "d",
+          "takesValue": false
+        }
+      ]
+    },
+    "updater": {
+      "endpoints": [
+        "https://github.com/tidewave-ai/tidewave_app/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQwMEFFMzdBQ0E3RTBCNDUKUldSRkMzN0tldU1LUUI4WEhCZEpLNzRQNkM4emZTa01Qc2M5WnVoSGdmQi9XTzd2ZWMyb3ViN1QK"
+    }
+  }
+}
