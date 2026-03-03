@@ -1,40 +1,83 @@
 # Sly: The Zero-Lib Engine 🧙🏾‍♂️
 
-Sly is an ultra-minimalist, high-performance autonomous coding agent. Designed specifically for individuals who value execution over abstraction, Sly is built as a single, rapidly-compiled binary with near-zero dependencies.
+Sly is an ultra-minimalist autonomous coding agent.
+Built as a single, rapidly-compiled binary with
+near-zero dependencies.
 
-Following the **Rich Hickey Strategic Doctrine**, Sly has been thoroughly "de-complected." We stripped out asynchronous runtimes, message protocols, and thick abstraction layers to reveal the absolute core of autonomous logic.
+> "Simplicity is the absence of complecting."
+> — Rich Hickey
 
-## 🚀 Key Achievements (v0.3.5)
-- **Release Compilation**: `0.59s`
-- **Binary Footprint**: `522KB`
-- **Zero-Lib Architecture**: Removed `tokio`, `axum`, `serde`, and `reqwest`.
-- **Standard Library Only**: Relies exclusively on `std` and system-native tools (`curl`, `sh`).
-- **Synchronous Pillar**: A linear, predictable OODA loop in a single thread. No race conditions.
+## Key Metrics (v0.3.5)
 
-## 🛠 Environment & Setup
-Sly operates by treating your **Operating System as a Library**.
+- **Release Build**: `0.59s`
+- **Binary Size**: `522KB`
+- **Warnings**: `0`
+- **Test Suite**: `26 tests, 0 failures`
+
+## Architecture
+
+Zero-Lib. Standard Library only. OS-as-a-Library.
+
+- Replaced `tokio`, `axum`, `serde`, `reqwest`
+  with `std` and native `curl` / `sh`.
+- Synchronous OODA loop. No race conditions.
+
+## Features
+
+- **Local Inference**: Set `SLY_OPENAI_URL` for
+  any OpenAI-compatible endpoint.
+- **Ralph Loop Reflexion**: Failed commands trigger
+  a reflexion primer that forces error analysis.
+- **Execution Timeouts**: 60-second kill switch
+  on shell commands.
+- **Mortal Memory**: Rolling 20-message window
+  prevents unbounded token growth.
+- **Parser Hardening**: Survives truncated JSON
+  and missing markdown fences.
+
+## Setup
 
 ### Prerequisites
+
 - Rust (latest stable)
 - `curl` (system-wide)
-- `GEMINI_API_KEY` exported in your environment.
+- `GEMINI_API_KEY` or `SLY_OPENAI_URL` exported.
 
-### Getting Started
+### Build & Run
+
 ```bash
-# Build the production release
 cargo build --release --workspace
-
-# Run the core agent
 ./target/release/sly
 ```
 
-## 📜 Philosophy: The "Flat Tree"
-> "Simplicity is the absence of complecting." — Rich Hickey
+### Run Tests
 
-Sly is built to be "Simple" (one fold) rather than "Easy" (near to hand but tangled). We prioritize:
-1. **Values over Objects**: Pure state transitions (e.g., `Vec<String>`) over complex state-management classes.
-2. **De-complecting**: Absolutely no "Protocol" or "Command" indirection layers between standard I/O and execution.
-3. **Linearity**: Vertical pillars of execution (sync function calls) over horizontal trees of abstraction (message buses, event loops).
+```bash
+cargo test --workspace
+```
+
+## Module Map
+
+| Module       | Role                                    |
+|--------------|-----------------------------------------|
+| `control.rs` | OODA heartbeat loop                    |
+| `cortex.rs`  | LLM API (Gemini / OpenAI-compat)       |
+| `memory.rs`  | Session persistence, mortal window      |
+| `parser.rs`  | Zero-Serde JSON action extraction       |
+| `safety.rs`  | Transactional overlay filesystem        |
+| `io.rs`      | Stdin/stdout CLI adapter                |
+| `state.rs`   | Global config and state bundle          |
+| `error.rs`   | Unified error type                      |
+
+## Philosophy
+
+1. **Values over Objects**: `Vec<String>` over
+   state-management classes.
+2. **De-complecting**: No protocol or command
+   indirection layers.
+3. **Linearity**: Vertical function calls over
+   horizontal message buses.
 
 ## License
+
 Apache License, Version 2.0.
