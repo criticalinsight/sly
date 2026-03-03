@@ -1,9 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-    "tidewave-core",
-    "tidewave-cli",
-    "src-tauri",
     "sly-core",
     "tools/monitor",
 ]

@@ -1,42 +1,32 @@
-use thiserror::Error;
-
-#[derive(Error, Debug)]
-pub enum SlyError {
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-
-    #[error("Network error: {0}")]
-    Network(#[from] reqwest::Error),
-
-    #[error("Database error: {0}")]
-    Database(String),
-
-    #[error("MCP error: {0}")]
-    Mcp(String),
-
-    #[error("Context error: {0}")]
-    Cortex(String),
-
-    #[error("Overlay error: {0}")]
-    Overlay(String),
-
-    #[error("Task error: {0}")]
-    Task(String),
-
-    #[error("Session error: {0}")]
-    Session(String),
-
-    #[error("JSON error: {0}")]
-    Json(#[from] serde_json::Error),
-
-    #[error("TOML error: {0}")]
-    Toml(#[from] toml::de::Error),
-
-    #[error("Watch error: {0}")]
-    Watch(#[from] notify::Error),
-
-    #[error("Generic error: {0}")]
-    Generic(String),
-}
+use std::fmt;
 
 pub type Result<T> = std::result::Result<T, SlyError>;
+
+#[derive(Debug)]
+pub enum SlyError {
+    Io(std::io::Error),
+    Cortex(String),
+    Overlay(String),
+    Config(String),
+    Json(String),
+}
+
+impl std::error::Error for SlyError {}
+
+impl fmt::Display for SlyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SlyError::Io(e) => write!(f, "IO Error: {}", e),
+            SlyError::Cortex(e) => write!(f, "Cortex Error: {}", e),
+            SlyError::Overlay(e) => write!(f, "Overlay Error: {}", e),
+            SlyError::Config(e) => write!(f, "Config Error: {}", e),
+            SlyError::Json(e) => write!(f, "JSON Error: {}", e),
+        }
+    }
+}
+
+impl From<std::io::Error> for SlyError {
+    fn from(error: std::io::Error) -> Self {
+        SlyError::Io(error)
+    }
+}

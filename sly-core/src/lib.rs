@@ -1,10 +1,8 @@
-// pub mod memory_legacy;
-pub mod core;
+pub mod state;
+pub mod control;
+pub mod cortex;
 pub mod memory;
-pub mod safety;
 pub mod io;
-pub mod knowledge;
-pub mod swarm;
-
-pub mod mcp;
+pub mod parser;
+pub mod safety;
 pub mod error;
