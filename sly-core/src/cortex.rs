@@ -88,7 +88,10 @@ impl Cortex {
                 "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
                 self.config.primary_model, api_key
             );
-            let data = format!(r#"{{"contents": [{{"parts":[{{"text": {:?}}}]}}]}}"#, prompt);
+            let data = format!(
+                r#"{{"systemInstruction": {{"parts": [{{"text": {:?}}}]}}, "contents": [{{"parts":[{{"text": {:?}}}]}}]}}"#,
+                sys, prompt
+            );
             (url, data, String::new())
         };
 

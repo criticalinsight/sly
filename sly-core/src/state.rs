@@ -21,7 +21,8 @@ pub struct SlyConfig {
 impl Default for SlyConfig {
     fn default() -> Self {
         Self {
-            primary_model: "qwen3:8b".to_string(),
+            primary_model: std::env::var("SLY_MODEL")
+                .unwrap_or_else(|_| "qwen3:8b".to_string()),
             max_autonomous_loops: 50,
         }
     }
