@@ -46,13 +46,12 @@ impl Memory {
     }
 
     /// Update session messages directly with Mortal Memory Compression.
-    pub fn update_messages(&self, session_id: &str, messages: &[String]) -> Result<()> {
+    pub fn update_messages(&self, session_id: &str, messages: &[String], max_history: usize) -> Result<()> {
         let mut final_messages = messages.to_vec();
         
         // Mortal Memory Compression (Rolling Window)
-        let max_history = 20;
         if messages.len() > max_history {
-            println!("🗜️ Memory threshold reached. Compacting...");
+            println!("🗜️ Memory threshold reached ({}). Compacting...", max_history);
             let remainder = &messages[messages.len() - max_history + 1..];
             let first = messages[0].clone();
             
@@ -99,7 +98,7 @@ mod tests {
     fn test_write_and_read_messages() {
         let mem = temp_memory("rw");
         let msgs = vec!["hello".to_string(), "world".to_string()];
-        mem.update_messages("rw1", &msgs).unwrap();
+        mem.update_messages("rw1", &msgs, 20).unwrap();
         let retrieved = mem.get_messages("rw1").unwrap();
         assert_eq!(retrieved, msgs);
         fs::remove_dir_all(&mem.base_path).ok();
@@ -110,7 +109,7 @@ mod tests {
         let mem = temp_memory("compress");
         // Create 25 single-word messages (no newlines) to exceed threshold of 20
         let msgs: Vec<String> = (0..25).map(|i| format!("m{}", i)).collect();
-        mem.update_messages("cmp", &msgs).unwrap();
+        mem.update_messages("cmp", &msgs, 20).unwrap();
         let retrieved = mem.get_messages("cmp").unwrap();
         // Should be: first msg + marker + last 19 = 21 total
         assert_eq!(retrieved.len(), 21);

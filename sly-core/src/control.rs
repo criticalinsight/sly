@@ -109,9 +109,11 @@ fn handle_slash_command(input: &str, state: &mut GlobalState) -> bool {
 fn run_reasoning_cycle(user_input: String, state: &mut GlobalState) -> Result<()> {
     let mut messages = state.memory.get_messages(&state.session_id)?;
     messages.push(format!("USER: {}", user_input));
+    let cycle_start = std::time::Instant::now();
 
     for i in 0..state.config.max_autonomous_loops {
-        println!("{} [Step {}] Thinking...", "🤔".magenta(), i + 1);
+        let elapsed = cycle_start.elapsed().as_secs();
+        println!("{} [Step {}/{}] Thinking... ({}s elapsed)", "🤔".magenta(), i + 1, state.config.max_autonomous_loops, elapsed);
         
         // Pass the explicit array structure to cortex for KV Cache hit
         let response = state.cortex.generate_sync(&messages, crate::cortex::ThinkingLevel::Low, None)?;
@@ -142,7 +144,7 @@ fn run_reasoning_cycle(user_input: String, state: &mut GlobalState) -> Result<()
                          .spawn() {
                          Ok(mut child) => {
                              let start = std::time::Instant::now();
-                             let timeout_secs = 60;
+                             let timeout_secs = 3600; // Increased from 60 to allow compilation
                              loop {
                                  match child.try_wait() {
                                      Ok(Some(status)) => {
@@ -185,31 +187,57 @@ fn run_reasoning_cycle(user_input: String, state: &mut GlobalState) -> Result<()
                          }
                      }
                 }
+                AgentAction::ReadFile { path } => {
+                     println!("{} Reading {}", "📖".blue(), path);
+                     let read_path = state.overlay.scratchpad_dir.join(&path);
+                     match std::fs::read_to_string(&read_path) {
+                         Ok(content) => {
+                             let truncated = if content.len() > 2000 {
+                                 format!("{}\n... [truncated, {} bytes total]", &content[..2000], content.len())
+                             } else {
+                                 content
+                             };
+                             messages.push(format!("USER: Observation: Contents of {}:\n{}", path, truncated));
+                         }
+                         Err(e) => {
+                             messages.push(format!("USER: Observation: Failed to read {}: {}", path, e));
+                         }
+                     }
+                }
                 AgentAction::FinalResponse { title, summary } => {
                     println!("🏁 Done: {} - {}", title.bold(), summary);
-                    // Auto-commit overlay files on task completion
-                    match state.overlay.commit() {
-                        Ok(files) if !files.is_empty() => {
-                            println!("{} Auto-committed {} file(s):", "✅".green(), files.len());
-                            for f in &files {
-                                println!("   📄 {}", f);
-                            }
-                        }
-                        _ => {}
-                    }
+                    commit_overlay(state);
                     completed = true;
                 }
                 AgentAction::Answer { text } => {
                     println!("💬 Answer: {}", text);
+                    commit_overlay(state);
                     completed = true;
+                }
+                AgentAction::InvalidJson { raw } => {
+                    println!("{} Invalid JSON (no directive): {}", "⚠️".yellow(), &raw[..raw.len().min(80)]);
+                    messages.push("USER: Observation: Your response was valid JSON but missing the required \"directive\" key. You MUST respond with one of: WriteFile, ReadFile, ExecShell, Answer, or FinalResponse. Retry.".to_string());
                 }
             }
         }
 
-        state.memory.update_messages(&state.session_id, &messages)?;
+        state.memory.update_messages(&state.session_id, &messages, state.config.max_memory_window)?;
         
         if completed { break; }
     }
 
     Ok(())
+}
+
+/// Helper to commit overlay changes and print summary.
+fn commit_overlay(state: &mut GlobalState) {
+    match state.overlay.commit() {
+        Ok(files) if !files.is_empty() => {
+            println!("{} Auto-committed {} file(s):", "✅".green(), files.len());
+            for f in &files {
+                println!("   📄 {}", f);
+            }
+        }
+        _ => {}
+    }
 }

@@ -28,7 +28,6 @@ impl<'a> OpenAIRequest<'a> {
             .collect();
         serde_json::json!({
             "model": self.model,
-            "response_format": { "type": "json_object" },
             "messages": msgs
         }).to_string()
     }
@@ -77,7 +76,14 @@ Available actions:
   "text": "your answer"
 }
 
-4. Signal task completion:
+4. Read a file:
+{
+  "thought": "I need to inspect the existing code.",
+  "directive": "ReadFile",
+  "path": "relative/path.ext"
+}
+
+5. Signal task completion:
 {
   "thought": "The task is fully complete.",
   "directive": "FinalResponse",
@@ -91,6 +97,7 @@ Rules:
 - No conversational text outside the JSON.
 - After executing actions you will receive Observations with results.
 - When the task is fully complete, send FinalResponse.
+- Persistence: Changes made via WriteFile are staged in an overlay and only committed to disk upon FinalResponse or Answer.
 - Think step by step using the "thought" key."#;
 
 /// Controls the reasoning budget sent to the model.

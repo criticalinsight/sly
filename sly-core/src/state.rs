@@ -16,6 +16,8 @@ pub struct SlyConfig {
     pub primary_model: String,
     /// Maximum OODA iterations per user query.
     pub max_autonomous_loops: usize,
+    /// Rolling memory window size before compression.
+    pub max_memory_window: usize,
 }
 
 impl Default for SlyConfig {
@@ -24,6 +26,7 @@ impl Default for SlyConfig {
             primary_model: std::env::var("SLY_MODEL")
                 .unwrap_or_else(|_| "qwen3:8b".to_string()),
             max_autonomous_loops: 50,
+            max_memory_window: 40,
         }
     }
 }

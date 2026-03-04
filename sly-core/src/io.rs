@@ -4,7 +4,7 @@
 //! Empty lines are silently re-prompted.
 
 use crate::error::Result;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, IsTerminal, Write};
 
 /// Minimal CLI adapter. Reads lines from stdin.
 pub struct CliAdapter {
@@ -18,9 +18,9 @@ impl Default for CliAdapter {
 }
 
 impl CliAdapter {
-    /// Create a new interactive CLI adapter.
+    /// Create a new CLI adapter. Auto-detects pipe mode.
     pub fn new() -> Self {
-        Self { pipe_mode: false }
+        Self { pipe_mode: !io::stdin().is_terminal() }
     }
 
     /// Read the next non-empty line from stdin.

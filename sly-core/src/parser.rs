@@ -11,12 +11,16 @@ use crate::error::Result;
 pub enum AgentAction {
     /// Write content to a file path via the overlay.
     WriteFile { path: String, content: String },
+    /// Read a file from the scratchpad.
+    ReadFile { path: String },
     /// Execute a shell command via `sh -c`.
     ExecShell { command: String },
     /// Signal task completion with a title and summary.
     FinalResponse { title: String, summary: String },
     /// Return a plain-text answer to the user.
     Answer { text: String },
+    /// Invalid JSON — parsed but missing `directive` key.
+    InvalidJson { raw: String },
 }
 
 /// Extract [`AgentAction`]s from an LLM response string.
@@ -55,6 +59,9 @@ pub fn parse_action(response: &str) -> Result<Vec<AgentAction>> {
         if let Some(action) = manual_parse_json_action(response) {
             actions.push(action);
             Ok(actions)
+        } else if serde_json::from_str::<serde_json::Value>(response).is_ok() {
+            // Valid JSON but no directive — signal retry
+            Ok(vec![AgentAction::InvalidJson { raw: response.to_string() }])
         } else {
             Ok(vec![AgentAction::Answer { text: response.to_string() }])
         }
@@ -81,6 +88,10 @@ fn manual_parse_json_action(json_str: &str) -> Option<AgentAction> {
         "Answer" => {
             let text = data.get("text")?.as_str()?.to_string();
             Some(AgentAction::Answer { text })
+        },
+        "ReadFile" => {
+            let path = data.get("path")?.as_str()?.to_string();
+            Some(AgentAction::ReadFile { path })
         },
         "FinalResponse" => {
             let title = data.get("title")?.as_str()?.to_string();
