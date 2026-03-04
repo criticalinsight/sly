@@ -38,6 +38,7 @@ pub struct GlobalState {
     pub overlay: OverlayFS,
     pub cortex: Cortex,
     pub io: CliAdapter,
+    pub session_id: String,
 }
 
 impl GlobalState {
@@ -48,7 +49,8 @@ impl GlobalState {
         let overlay = OverlayFS::new(std::path::Path::new("."), "transient")?;
         let cortex = Cortex::new(config.clone(), String::new())?;
         let io = CliAdapter::new();
+        let session_id = format!("sess_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
 
-        Ok(Self { config, memory, overlay, cortex, io })
+        Ok(Self { config, memory, overlay, cortex, io, session_id })
     }
 }

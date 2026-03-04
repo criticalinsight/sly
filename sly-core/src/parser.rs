@@ -64,170 +64,36 @@ pub fn parse_action(response: &str) -> Result<Vec<AgentAction>> {
 }
 
 fn manual_parse_json_action(json_str: &str) -> Option<AgentAction> {
-    let directive = find_json_val(json_str, "directive")?;
+    let data: serde_json::Value = serde_json::from_str(json_str).ok()?;
     
-    match directive.as_str() {
+    let directive = data.get("directive")?.as_str()?;
+    
+    match directive {
         "WriteFile" => {
-            let path = find_json_val(json_str, "path")?;
-            let content = find_json_val(json_str, "content")?;
+            let path = data.get("path")?.as_str()?.to_string();
+            let content = data.get("content")?.as_str()?.to_string();
             Some(AgentAction::WriteFile { path, content })
         },
         "ExecShell" => {
-            let command = find_json_val(json_str, "command")?;
+            let command = data.get("command")?.as_str()?.to_string();
             Some(AgentAction::ExecShell { command })
         },
         "Answer" => {
-            let text = find_json_val(json_str, "text")?;
+            let text = data.get("text")?.as_str()?.to_string();
             Some(AgentAction::Answer { text })
         },
         "FinalResponse" => {
-            let title = find_json_val(json_str, "title")?;
-            let summary = find_json_val(json_str, "summary")?;
+            let title = data.get("title")?.as_str()?.to_string();
+            let summary = data.get("summary")?.as_str()?.to_string();
             Some(AgentAction::FinalResponse { title, summary })
         },
         _ => None,
     }
 }
 
-/// Extract the string value for `key` from a JSON-like string.
-///
-/// This is the Zero-Serde core: a simple `"key": "value"` scanner.
-pub fn find_json_val(json: &str, key: &str) -> Option<String> {
-    let pattern = format!("\"{}\"", key);
-    if let Some(idx) = json.find(&pattern) {
-        let after = &json[idx + pattern.len()..];
-        if let Some(colon) = after.find(':') {
-            let val_part = &after[colon + 1..].trim();
-            if let Some(stripped) = val_part.strip_prefix('"') {
-                let (val, _) = extract_json_string(stripped);
-                return Some(val);
-            }
-        }
-    }
-    None
-}
-
-/// Extract a JSON string literal, handling escape sequences
-/// including `\uXXXX` unicode escapes.
-///
-/// Returns `(decoded_string, bytes_consumed)`. Stops at the
-/// closing `"` or end-of-input.
-pub fn extract_json_string(s: &str) -> (String, usize) {
-    let mut result = String::new();
-    let mut chars = s.char_indices().peekable();
-
-    while let Some((i, c)) = chars.next() {
-        if c == '\\' {
-            if let Some(&(_, esc)) = chars.peek() {
-                chars.next();
-                match esc {
-                    'n' => result.push('\n'),
-                    'r' => result.push('\r'),
-                    't' => result.push('\t'),
-                    '\\' => result.push('\\'),
-                    '"' => result.push('"'),
-                    '/' => result.push('/'),
-                    'u' => {
-                        // Parse \uXXXX unicode escape
-                        let mut hex = String::with_capacity(4);
-                        for _ in 0..4 {
-                            if let Some(&(_, h)) = chars.peek() {
-                                hex.push(h);
-                                chars.next();
-                            }
-                        }
-                        if let Ok(code) = u32::from_str_radix(&hex, 16) {
-                            if let Some(ch) = char::from_u32(code) {
-                                result.push(ch);
-                            }
-                        }
-                    }
-                    _ => result.push(esc),
-                }
-            }
-        } else if c == '"' {
-            return (result, i + 1);
-        } else {
-            result.push(c);
-        }
-    }
-
-    (result, s.len())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // --- extract_json_string ---
-
-    #[test]
-    fn test_extract_simple_string() {
-        let (val, len) = extract_json_string(r#"hello""#);
-        assert_eq!(val, "hello");
-        assert_eq!(len, 6);
-    }
-
-    #[test]
-    fn test_extract_escaped_newline() {
-        let (val, _) = extract_json_string(r#"line1\nline2""#);
-        assert_eq!(val, "line1\nline2");
-    }
-
-    #[test]
-    fn test_extract_escaped_quote() {
-        let (val, _) = extract_json_string(r#"say \"hi\"""#);
-        assert_eq!(val, "say \"hi\"");
-    }
-
-    #[test]
-    fn test_extract_escaped_backslash() {
-        let (val, _) = extract_json_string(r#"path\\to\\file""#);
-        assert_eq!(val, "path\\to\\file");
-    }
-
-    #[test]
-    fn test_extract_empty_string() {
-        let (val, len) = extract_json_string(r#"""#);
-        assert_eq!(val, "");
-        assert_eq!(len, 1);
-    }
-
-    #[test]
-    fn test_extract_unicode_escape() {
-        // \u003c = <, \u003e = >
-        let (val, _) = extract_json_string(r#"\u003ch1\u003eHello\u003c/h1\u003e""#);
-        assert_eq!(val, "<h1>Hello</h1>");
-    }
-
-    #[test]
-    fn test_extract_mixed_escapes() {
-        // Mix of \n and \uXXXX
-        let (val, _) = extract_json_string(r#"\u003cp\u003eline1\nline2\u003c/p\u003e""#);
-        assert_eq!(val, "<p>line1\nline2</p>");
-    }
-
-    // --- find_json_val ---
-
-    #[test]
-    fn test_find_json_val_basic() {
-        let json = r#"{"directive": "ExecShell", "command": "ls -la"}"#;
-        assert_eq!(find_json_val(json, "directive"), Some("ExecShell".to_string()));
-        assert_eq!(find_json_val(json, "command"), Some("ls -la".to_string()));
-    }
-
-    #[test]
-    fn test_find_json_val_missing_key() {
-        let json = r#"{"directive": "ExecShell"}"#;
-        assert_eq!(find_json_val(json, "nonexistent"), None);
-    }
-
-    #[test]
-    fn test_find_json_val_with_spaces() {
-        let json = r#"{ "directive" : "Answer" , "text" : "hello world" }"#;
-        assert_eq!(find_json_val(json, "directive"), Some("Answer".to_string()));
-        assert_eq!(find_json_val(json, "text"), Some("hello world".to_string()));
-    }
 
     // --- parse_action ---
 

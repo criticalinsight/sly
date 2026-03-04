@@ -7,20 +7,7 @@ use crate::state::SlyConfig;
 use crate::error::{Result, SlyError};
 use std::process::Command;
 
-/// Barebones JSON escaping for strings
-fn escape_json(s: &str) -> String {
-    s.chars()
-        .flat_map(|c| match c {
-            '"' => vec!['\\', '"'],
-            '\\' => vec!['\\', '\\'],
-            '\n' => vec!['\\', 'n'],
-            '\r' => vec!['\\', 'r'],
-            '\t' => vec!['\\', 't'],
-            c if c.is_control() => format!("\\u{:04x}", c as u32).chars().collect(),
-            c => vec![c],
-        })
-        .collect()
-}
+// Removed handwritten escape_json in favor of serde_json
 
 // --- Data Structures for API Requests ---
 
@@ -36,10 +23,14 @@ struct OpenAIRequest<'a> {
 
 impl<'a> OpenAIRequest<'a> {
     fn to_json(&self) -> String {
-        let msgs: Vec<String> = self.messages.iter()
-            .map(|m| format!(r#"{{"role": "{}", "content": "{}"}}"#, m.role, escape_json(m.content)))
+        let msgs: Vec<serde_json::Value> = self.messages.iter()
+            .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
             .collect();
-        format!(r#"{{"model": "{}", "response_format": {{"type": "json_object"}}, "messages": [{}]}}"#, self.model, msgs.join(", "))
+        serde_json::json!({
+            "model": self.model,
+            "response_format": { "type": "json_object" },
+            "messages": msgs
+        }).to_string()
     }
 }
 
@@ -50,9 +41,11 @@ struct GeminiRequest<'a> {
 
 impl<'a> GeminiRequest<'a> {
     fn to_json(&self) -> String {
-        let sys_json = format!(r#"{{"parts": [{{"text": "{}"}}]}}"#, escape_json(self.system));
-        let user_json = format!(r#"{{"parts": [{{"text": "{}"}}]}}"#, escape_json(self.user));
-        format!(r#"{{"systemInstruction": {}, "generationConfig": {{"responseMimeType": "application/json"}}, "contents": [{}]}}"#, sys_json, user_json)
+        serde_json::json!({
+            "systemInstruction": { "parts": [{ "text": self.system }] },
+            "generationConfig": { "responseMimeType": "application/json" },
+            "contents": [{ "parts": [{ "text": self.user }] }]
+        }).to_string()
     }
 }
 
@@ -134,8 +127,9 @@ impl Cortex {
         _system_prompt: Option<String>,
     ) -> Result<String> {
         let sys = AGENT_SYSTEM_PROMPT;
+        let openai_url_opt = std::env::var("SLY_OPENAI_URL").ok().filter(|s| !s.is_empty());
 
-        let (url, data, auth_header) = if let Ok(openai_url) = std::env::var("SLY_OPENAI_URL") {
+        let (url, data, auth_header) = if let Some(openai_url) = openai_url_opt {
             let mut api_msgs = vec![OpenAIMessage { role: "system", content: sys }];
             for msg in messages {
                 if let Some(content) = msg.strip_prefix("MODEL: ") {
@@ -190,13 +184,16 @@ impl Cortex {
 
         let res_body = String::from_utf8_lossy(&output.stdout);
 
-        // Zero-Serde: extract "text" (Gemini) or "content" (OpenAI) field.
-        if let Some(text) = crate::parser::find_json_val(&res_body, "text")
-            .or_else(|| crate::parser::find_json_val(&res_body, "content"))
-        {
-            Ok(text)
+        let json: serde_json::Value = serde_json::from_str(&res_body)
+            .map_err(|_| SlyError::Json(format!("Failed to parse JSON response: {}", res_body)))?;
+
+        // Extract content via JSON pointers based on API provider format
+        if let Some(content) = json.pointer("/choices/0/message/content").and_then(|v| v.as_str()) {
+            Ok(content.to_string())
+        } else if let Some(text) = json.pointer("/candidates/0/content/parts/0/text").and_then(|v| v.as_str()) {
+            Ok(text.to_string())
         } else {
-            Err(SlyError::Json(format!("Failed to parse response: {}", res_body)))
+            Err(SlyError::Json(format!("Response missing expected text/content fields: {}", res_body)))
         }
     }
 }

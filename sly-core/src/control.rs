@@ -78,6 +78,21 @@ fn handle_slash_command(input: &str, state: &mut GlobalState) -> bool {
             }
             true
         }
+        "/status" => {
+            if let Ok(msgs) = state.memory.get_messages(&state.session_id) {
+                if msgs.is_empty() {
+                    println!("📜 Memory is currently empty.");
+                } else {
+                    println!("📜 Message Trace ({} messages):", msgs.len());
+                    for (i, m) in msgs.iter().enumerate() {
+                        println!("\n---[{}]---\n{}", i, m.bright_black());
+                    }
+                }
+            } else {
+                println!("⚠️ No memory trace found.");
+            }
+            true
+        }
         _ => {
             println!("{} Unknown command: {}", "⚠️".yellow(), input);
             true
@@ -92,9 +107,7 @@ fn handle_slash_command(input: &str, state: &mut GlobalState) -> bool {
 /// is emitted. Includes 60-second execution timeouts and Ralph
 /// Loop reflexion on command failures.
 fn run_reasoning_cycle(user_input: String, state: &mut GlobalState) -> Result<()> {
-    let session_id = format!("sess_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
-    
-    let mut messages = state.memory.get_messages(&session_id)?;
+    let mut messages = state.memory.get_messages(&state.session_id)?;
     messages.push(format!("USER: {}", user_input));
 
     for i in 0..state.config.max_autonomous_loops {
@@ -122,7 +135,11 @@ fn run_reasoning_cycle(user_input: String, state: &mut GlobalState) -> Result<()
                      let temp_err = format!("/tmp/sly_err_{}_{}", std::process::id(), i);
                      let safe_cmd = format!("( {} ) > {} 2> {}", command, temp_out, temp_err);
                      
-                     match std::process::Command::new("sh").arg("-c").arg(&safe_cmd).spawn() {
+                     match std::process::Command::new("sh")
+                         .arg("-c")
+                         .arg(&safe_cmd)
+                         .current_dir(&state.overlay.scratchpad_dir)
+                         .spawn() {
                          Ok(mut child) => {
                              let start = std::time::Instant::now();
                              let timeout_secs = 60;
@@ -189,7 +206,7 @@ fn run_reasoning_cycle(user_input: String, state: &mut GlobalState) -> Result<()
             }
         }
 
-        state.memory.update_messages(&session_id, &messages)?;
+        state.memory.update_messages(&state.session_id, &messages)?;
         
         if completed { break; }
     }

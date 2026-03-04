@@ -13,33 +13,74 @@ use std::path::{Path, PathBuf};
 pub struct OverlayFS {
     pub(crate) base_dir: PathBuf,
     pub(crate) overlay_dir: PathBuf,
+    pub(crate) scratchpad_dir: PathBuf,
 }
 
 impl OverlayFS {
     /// Create a fresh overlay directory under the system temp dir.
     pub fn new(base_dir: &Path, overlay_id: &str) -> Result<Self> {
         let temp_dir = std::env::temp_dir().join("sly_overlays").join(overlay_id);
+        let scratchpad_dir = std::env::temp_dir().join("sly_scratchpad").join(overlay_id);
         
         if temp_dir.exists() {
             fs::remove_dir_all(&temp_dir)?;
         }
         fs::create_dir_all(&temp_dir)?;
 
+        if scratchpad_dir.exists() {
+            fs::remove_dir_all(&scratchpad_dir)?;
+        }
+        fs::create_dir_all(&scratchpad_dir)?;
+
+        let base_dir_canon = fs::canonicalize(base_dir).unwrap_or_else(|_| base_dir.to_path_buf());
+        Self::clone_base_to_scratchpad(&base_dir_canon, &scratchpad_dir)?;
+
         Ok(Self {
-            base_dir: fs::canonicalize(base_dir).unwrap_or_else(|_| base_dir.to_path_buf()),
+            base_dir: base_dir_canon,
             overlay_dir: temp_dir,
+            scratchpad_dir,
         })
+    }
+
+    fn clone_base_to_scratchpad(src: &Path, dst: &Path) -> Result<()> {
+        if !src.exists() { return Ok(()); }
+        for entry in fs::read_dir(src)? {
+            let entry = entry?;
+            let path = entry.path();
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            
+            // Rich Hickey insight: Omit large, ephemeral caches from the projection.
+            if name_str == ".git" || name_str == "target" || name_str == "node_modules" {
+                continue;
+            }
+            
+            let dst_path = dst.join(name);
+            if path.is_dir() {
+                fs::create_dir_all(&dst_path)?;
+                Self::clone_base_to_scratchpad(&path, &dst_path)?;
+            } else {
+                fs::copy(&path, &dst_path)?;
+            }
+        }
+        Ok(())
     }
 
     /// Write a file into the overlay. Rejects absolute paths outside `base_dir`.
     pub fn write_file(&self, path: &Path, content: &str) -> Result<()> {
-        let overlay_path = self.map_to_overlay(path)?;
+        let rel_path = self.get_relative_path(path)?;
+        let overlay_path = self.overlay_dir.join(&rel_path);
+        let scratchpad_path = self.scratchpad_dir.join(&rel_path);
 
         if let Some(parent) = overlay_path.parent() {
             fs::create_dir_all(parent)?;
         }
+        if let Some(parent) = scratchpad_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
 
-        fs::write(overlay_path, content)?;
+        fs::write(&overlay_path, content)?;
+        fs::write(&scratchpad_path, content)?;
         Ok(())
     }
 
@@ -114,6 +155,13 @@ impl OverlayFS {
             fs::remove_dir_all(&self.overlay_dir)?;
         }
         fs::create_dir_all(&self.overlay_dir)?;
+
+        if self.scratchpad_dir.exists() {
+            fs::remove_dir_all(&self.scratchpad_dir)?;
+        }
+        fs::create_dir_all(&self.scratchpad_dir)?;
+        Self::clone_base_to_scratchpad(&self.base_dir, &self.scratchpad_dir)?;
+        
         Ok(())
     }
 
@@ -129,10 +177,6 @@ impl OverlayFS {
         }
     }
 
-    fn map_to_overlay(&self, path: &Path) -> Result<PathBuf> {
-        let rel_path = self.get_relative_path(path)?;
-        Ok(self.overlay_dir.join(rel_path))
-    }
 }
 
 #[cfg(test)]
