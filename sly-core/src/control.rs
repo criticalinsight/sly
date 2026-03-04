@@ -110,10 +110,34 @@ fn run_reasoning_cycle(user_input: String, state: &mut GlobalState) -> Result<()
     let mut messages = state.memory.get_messages(&state.session_id)?;
     messages.push(format!("USER: {}", user_input));
     let cycle_start = std::time::Instant::now();
+    let mut written_files: Vec<String> = Vec::new();
 
     for i in 0..state.config.max_autonomous_loops {
         let elapsed = cycle_start.elapsed().as_secs();
         println!("{} [Step {}/{}] Thinking... ({}s elapsed)", "🤔".magenta(), i + 1, state.config.max_autonomous_loops, elapsed);
+
+        // F2: Inject file manifest header so model knows what exists
+        if !written_files.is_empty() {
+            let manifest = format!("[FILES: {}]", written_files.join(", "));
+            // Update the first user message with the manifest
+            if let Some(first) = messages.first_mut() {
+                if !first.contains("[FILES:") {
+                    *first = format!("{} {}", manifest, first);
+                } else {
+                    // Update existing manifest
+                    if let Some(end) = first.find(']') {
+                        *first = format!("{}{}", manifest, &first[end + 1..]);
+                    }
+                }
+            }
+        }
+
+        // F4: Token budget warning
+        let total_chars: usize = messages.iter().map(|m| m.len()).sum();
+        let est_tokens = total_chars / 4;
+        if est_tokens > state.config.token_budget_warning {
+            eprintln!("{} Token budget: ~{}/{} tokens used", "⚠️".yellow(), est_tokens, state.config.token_budget_warning);
+        }
         
         // Pass the explicit array structure to cortex for KV Cache hit
         let response = state.cortex.generate_sync(&messages, crate::cortex::ThinkingLevel::Low, None)?;
@@ -129,6 +153,7 @@ fn run_reasoning_cycle(user_input: String, state: &mut GlobalState) -> Result<()
                 AgentAction::WriteFile { path, content } => {
                      println!("{} Writing {}", "💾".blue(), path);
                      state.overlay.write_file(std::path::Path::new(&path), &content).ok();
+                     written_files.push(path.clone());
                      messages.push(format!("USER: Observation: Wrote {}", path));
                 }
                 AgentAction::ExecShell { command } => {
@@ -160,7 +185,9 @@ fn run_reasoning_cycle(user_input: String, state: &mut GlobalState) -> Result<()
                                              String::new()
                                          };
 
-                                         messages.push(format!("USER: Observation:\n{}\nStdout: {}\nStderr: {}", primer, out, err));
+                                         let out_trunc = truncate_output(&out, 500);
+                                         let err_trunc = truncate_output(&err, 300);
+                                         messages.push(format!("USER: Observation:\n{}\nStdout: {}\nStderr: {}", primer, out_trunc, err_trunc));
                                          break;
                                      }
                                      Ok(None) => {
@@ -168,7 +195,9 @@ fn run_reasoning_cycle(user_input: String, state: &mut GlobalState) -> Result<()
                                              child.kill().ok();
                                              let out = std::fs::read_to_string(&temp_out).unwrap_or_default();
                                              let err = std::fs::read_to_string(&temp_err).unwrap_or_default();
-                                             messages.push(format!("USER: Observation: Timeout ({}s). Killed.\nStdout: {}\nStderr: {}", timeout_secs, out, err));
+                                             let out_trunc = truncate_output(&out, 500);
+                                             let err_trunc = truncate_output(&err, 300);
+                                             messages.push(format!("USER: Observation: Timeout ({}s). Killed.\nStdout: {}\nStderr: {}", timeout_secs, out_trunc, err_trunc));
                                              break;
                                          }
                                          std::thread::sleep(std::time::Duration::from_millis(100));
@@ -221,7 +250,7 @@ fn run_reasoning_cycle(user_input: String, state: &mut GlobalState) -> Result<()
             }
         }
 
-        state.memory.update_messages(&state.session_id, &messages, state.config.max_memory_window)?;
+        state.memory.update_messages(&state.session_id, &messages, state.config.max_memory_window, None)?;
         
         if completed { break; }
     }
@@ -239,5 +268,14 @@ fn commit_overlay(state: &mut GlobalState) {
             }
         }
         _ => {}
+    }
+}
+
+/// Truncate text to `max_chars`, appending a size marker if truncated.
+fn truncate_output(text: &str, max_chars: usize) -> String {
+    if text.len() > max_chars {
+        format!("{}...\n[truncated, {} bytes total]", &text[..max_chars], text.len())
+    } else {
+        text.to_string()
     }
 }

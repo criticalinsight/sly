@@ -18,6 +18,8 @@ pub struct SlyConfig {
     pub max_autonomous_loops: usize,
     /// Rolling memory window size before compression.
     pub max_memory_window: usize,
+    /// Estimated token count at which to warn (chars / 4).
+    pub token_budget_warning: usize,
 }
 
 impl Default for SlyConfig {
@@ -27,6 +29,7 @@ impl Default for SlyConfig {
                 .unwrap_or_else(|_| "qwen3:8b".to_string()),
             max_autonomous_loops: 50,
             max_memory_window: 40,
+            token_budget_warning: 4000,
         }
     }
 }

@@ -9,6 +9,9 @@ use crate::error::Result;
 use std::fs;
 use std::path::Path;
 
+/// Callback type for summarizing discarded messages during compression.
+pub type SummarizeFn<'a> = &'a dyn Fn(&[String]) -> String;
+
 /// File-backed session memory.
 ///
 /// Each session is a plain text file: one message per line.
@@ -45,18 +48,35 @@ impl Memory {
         }
     }
 
-    /// Update session messages directly with Mortal Memory Compression.
-    pub fn update_messages(&self, session_id: &str, messages: &[String], max_history: usize) -> Result<()> {
+    /// Update session messages with Mortal Memory Compression.
+    ///
+    /// If `summarize_fn` is provided, discarded messages are passed to it
+    /// to produce a dense summary. Otherwise a static marker is used.
+    pub fn update_messages(
+        &self,
+        session_id: &str,
+        messages: &[String],
+        max_history: usize,
+        summarize_fn: Option<SummarizeFn<'_>>,
+    ) -> Result<()> {
         let mut final_messages = messages.to_vec();
         
         // Mortal Memory Compression (Rolling Window)
         if messages.len() > max_history {
             println!("🗜️ Memory threshold reached ({}). Compacting...", max_history);
-            let remainder = &messages[messages.len() - max_history + 1..];
+            let keep_count = max_history - 1; // leave room for summary
+            let discard_end = messages.len() - keep_count;
+            let discarded = &messages[1..discard_end]; // skip first (original user query)
+            let remainder = &messages[discard_end..];
             let first = messages[0].clone();
             
-            final_messages = vec![first];
-            final_messages.push("... [Older context mortality excised] ...".to_string());
+            let summary = if let Some(f) = summarize_fn {
+                f(discarded)
+            } else {
+                "... [Older context mortality excised] ...".to_string()
+            };
+
+            final_messages = vec![first, summary];
             final_messages.extend_from_slice(remainder);
         }
 
@@ -98,7 +118,7 @@ mod tests {
     fn test_write_and_read_messages() {
         let mem = temp_memory("rw");
         let msgs = vec!["hello".to_string(), "world".to_string()];
-        mem.update_messages("rw1", &msgs, 20).unwrap();
+        mem.update_messages("rw1", &msgs, 20, None).unwrap();
         let retrieved = mem.get_messages("rw1").unwrap();
         assert_eq!(retrieved, msgs);
         fs::remove_dir_all(&mem.base_path).ok();
@@ -109,12 +129,27 @@ mod tests {
         let mem = temp_memory("compress");
         // Create 25 single-word messages (no newlines) to exceed threshold of 20
         let msgs: Vec<String> = (0..25).map(|i| format!("m{}", i)).collect();
-        mem.update_messages("cmp", &msgs, 20).unwrap();
+        mem.update_messages("cmp", &msgs, 20, None).unwrap();
         let retrieved = mem.get_messages("cmp").unwrap();
         // Should be: first msg + marker + last 19 = 21 total
         assert_eq!(retrieved.len(), 21);
         assert_eq!(retrieved[0], "m0");
         assert_eq!(retrieved[1], "... [Older context mortality excised] ...");
+        assert_eq!(*retrieved.last().unwrap(), "m24");
+        fs::remove_dir_all(&mem.base_path).ok();
+    }
+
+    #[test]
+    fn test_mortal_memory_with_summary_fn() {
+        let mem = temp_memory("summary");
+        let msgs: Vec<String> = (0..25).map(|i| format!("m{}", i)).collect();
+        let summarizer = |discarded: &[String]| -> String {
+            format!("SUMMARY: {} messages compressed", discarded.len())
+        };
+        mem.update_messages("sfn", &msgs, 20, Some(&summarizer)).unwrap();
+        let retrieved = mem.get_messages("sfn").unwrap();
+        assert_eq!(retrieved[0], "m0");
+        assert!(retrieved[1].starts_with("SUMMARY:"));
         assert_eq!(*retrieved.last().unwrap(), "m24");
         fs::remove_dir_all(&mem.base_path).ok();
     }
