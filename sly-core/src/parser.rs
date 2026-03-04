@@ -107,35 +107,52 @@ pub fn find_json_val(json: &str, key: &str) -> Option<String> {
     None
 }
 
-/// Extract a JSON string literal, handling escape sequences.
+/// Extract a JSON string literal, handling escape sequences
+/// including `\uXXXX` unicode escapes.
 ///
 /// Returns `(decoded_string, bytes_consumed)`. Stops at the
 /// closing `"` or end-of-input.
 pub fn extract_json_string(s: &str) -> (String, usize) {
     let mut result = String::new();
-    let mut escaped = false;
-    let mut bytes_read = 0;
-    for (i, c) in s.char_indices() {
-        if escaped {
-            match c {
-                'n' => result.push('\n'),
-                'r' => result.push('\r'),
-                't' => result.push('\t'),
-                '\\' => result.push('\\'),
-                '"' => result.push('"'),
-                _ => result.push(c),
+    let mut chars = s.char_indices().peekable();
+
+    while let Some((i, c)) = chars.next() {
+        if c == '\\' {
+            if let Some(&(_, esc)) = chars.peek() {
+                chars.next();
+                match esc {
+                    'n' => result.push('\n'),
+                    'r' => result.push('\r'),
+                    't' => result.push('\t'),
+                    '\\' => result.push('\\'),
+                    '"' => result.push('"'),
+                    '/' => result.push('/'),
+                    'u' => {
+                        // Parse \uXXXX unicode escape
+                        let mut hex = String::with_capacity(4);
+                        for _ in 0..4 {
+                            if let Some(&(_, h)) = chars.peek() {
+                                hex.push(h);
+                                chars.next();
+                            }
+                        }
+                        if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                            if let Some(ch) = char::from_u32(code) {
+                                result.push(ch);
+                            }
+                        }
+                    }
+                    _ => result.push(esc),
+                }
             }
-            escaped = false;
-        } else if c == '\\' {
-            escaped = true;
         } else if c == '"' {
             return (result, i + 1);
         } else {
             result.push(c);
         }
-        bytes_read = i + c.len_utf8();
     }
-    (result, bytes_read)
+
+    (result, s.len())
 }
 
 #[cfg(test)]
@@ -174,6 +191,20 @@ mod tests {
         let (val, len) = extract_json_string(r#"""#);
         assert_eq!(val, "");
         assert_eq!(len, 1);
+    }
+
+    #[test]
+    fn test_extract_unicode_escape() {
+        // \u003c = <, \u003e = >
+        let (val, _) = extract_json_string(r#"\u003ch1\u003eHello\u003c/h1\u003e""#);
+        assert_eq!(val, "<h1>Hello</h1>");
+    }
+
+    #[test]
+    fn test_extract_mixed_escapes() {
+        // Mix of \n and \uXXXX
+        let (val, _) = extract_json_string(r#"\u003cp\u003eline1\nline2\u003c/p\u003e""#);
+        assert_eq!(val, "<p>line1\nline2</p>");
     }
 
     // --- find_json_val ---
