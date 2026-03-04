@@ -21,7 +21,7 @@ pub struct SlyConfig {
 impl Default for SlyConfig {
     fn default() -> Self {
         Self {
-            primary_model: "gemini-3-flash".to_string(),
+            primary_model: "qwen3:8b".to_string(),
             max_autonomous_loops: 50,
         }
     }

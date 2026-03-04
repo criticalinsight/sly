@@ -32,6 +32,32 @@ pub fn cortex_loop(state: &mut GlobalState) {
                     continue;
                 }
 
+                if input == "/commit" {
+                    match state.overlay.commit() {
+                        Ok(files) => {
+                            println!("{} Committed {} file(s):", "✅".green(), files.len());
+                            for f in &files {
+                                println!("   📄 {}", f);
+                            }
+                        }
+                        Err(e) => eprintln!("{} Commit Error: {}", "⚠️".red(), e),
+                    }
+                    continue;
+                }
+
+                if input == "/files" {
+                    let files = state.overlay.list_files();
+                    if files.is_empty() {
+                        println!("📂 Overlay is empty.");
+                    } else {
+                        println!("📂 Overlay ({} file(s)):", files.len());
+                        for f in &files {
+                            println!("   📄 {}", f);
+                        }
+                    }
+                    continue;
+                }
+
                 // Direct execution of user query
                 if let Err(e) = run_reasoning_cycle(input, state) {
                     eprintln!("{} Execution Error: {}", "⚠️".red(), e);
@@ -132,6 +158,16 @@ fn run_reasoning_cycle(user_input: String, state: &mut GlobalState) -> Result<()
                 }
                 AgentAction::FinalResponse { title, summary } => {
                     println!("🏁 Done: {} - {}", title.bold(), summary);
+                    // Auto-commit overlay files on task completion
+                    match state.overlay.commit() {
+                        Ok(files) if !files.is_empty() => {
+                            println!("{} Auto-committed {} file(s):", "✅".green(), files.len());
+                            for f in &files {
+                                println!("   📄 {}", f);
+                            }
+                        }
+                        _ => {}
+                    }
                     completed = true;
                 }
                 AgentAction::Answer { text } => {

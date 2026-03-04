@@ -7,6 +7,37 @@ use crate::state::SlyConfig;
 use crate::error::{Result, SlyError};
 use std::process::Command;
 
+/// The default system prompt that teaches the LLM the action schema.
+const AGENT_SYSTEM_PROMPT: &str = r#"You are Sly, an autonomous coding agent. You MUST respond using JSON inside ```json code blocks.
+
+Available actions:
+1. Write a file:
+```json
+{"directive": "WriteFile", "path": "relative/path.ext", "content": "full file contents"}
+```
+
+2. Execute a shell command:
+```json
+{"directive": "ExecShell", "command": "shell command here"}
+```
+
+3. Give a text answer:
+```json
+{"directive": "Answer", "text": "your answer"}
+```
+
+4. Signal task completion:
+```json
+{"directive": "FinalResponse", "title": "Title", "summary": "What was done"}
+```
+
+Rules:
+- Always use ```json code blocks for actions.
+- You may include multiple action blocks in one response.
+- After executing actions you will receive Observations with results.
+- When the task is fully complete, send FinalResponse.
+- Think step by step. Execute one action at a time when uncertain."#;
+
 /// Controls the reasoning budget sent to the model.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum ThinkingLevel {
@@ -33,18 +64,19 @@ impl Cortex {
     /// 1. If `SLY_OPENAI_URL` is set → uses OpenAI-compatible chat format.
     /// 2. Otherwise → uses Gemini `generateContent` with `GEMINI_API_KEY`.
     ///
-    /// Response text is extracted using Zero-Serde JSON helpers from
-    /// [`crate::parser`].
+    /// A system prompt with the action schema is always injected.
     pub fn generate_sync(
         &self,
         prompt: String,
         _level: ThinkingLevel,
         _system_prompt: Option<String>,
     ) -> Result<String> {
+        let sys = AGENT_SYSTEM_PROMPT;
+
         let (url, data, auth_header) = if let Ok(openai_url) = std::env::var("SLY_OPENAI_URL") {
             let data = format!(
-                r#"{{"model": "{}", "messages": [{{"role": "user", "content": {:?}}}]}}"#,
-                self.config.primary_model, prompt
+                r#"{{"model": "{}", "messages": [{{"role": "system", "content": {:?}}}, {{"role": "user", "content": {:?}}}]}}"#,
+                self.config.primary_model, sys, prompt
             );
             let auth = std::env::var("OPENAI_API_KEY").unwrap_or_default();
             let auth_header = format!("Authorization: Bearer {}", auth);
