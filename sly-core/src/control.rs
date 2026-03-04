@@ -21,39 +21,9 @@ pub fn cortex_loop(state: &mut GlobalState) {
     loop {
         match state.io.next_input() {
             Ok(Some(input)) => {
-                if input == "/stop" || input == "/exit" {
-                    println!("{}", "👋 Graceful shutdown complete.".green());
-                    break;
-                }
-
-                if input == "/undo" {
-                    println!("{} Rollback", "⏪".yellow());
-                    let _ = state.overlay.rollback();
-                    continue;
-                }
-
-                if input == "/commit" {
-                    match state.overlay.commit() {
-                        Ok(files) => {
-                            println!("{} Committed {} file(s):", "✅".green(), files.len());
-                            for f in &files {
-                                println!("   📄 {}", f);
-                            }
-                        }
-                        Err(e) => eprintln!("{} Commit Error: {}", "⚠️".red(), e),
-                    }
-                    continue;
-                }
-
-                if input == "/files" {
-                    let files = state.overlay.list_files();
-                    if files.is_empty() {
-                        println!("📂 Overlay is empty.");
-                    } else {
-                        println!("📂 Overlay ({} file(s)):", files.len());
-                        for f in &files {
-                            println!("   📄 {}", f);
-                        }
+                if input.starts_with('/') {
+                    if !handle_slash_command(&input, state) {
+                        break;
                     }
                     continue;
                 }
@@ -68,6 +38,49 @@ pub fn cortex_loop(state: &mut GlobalState) {
                 eprintln!("Input Error: {}", e);
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
+        }
+    }
+}
+
+/// Handles slash commands, returning true to continue the loop, false to exit.
+fn handle_slash_command(input: &str, state: &mut GlobalState) -> bool {
+    match input {
+        "/stop" | "/exit" => {
+            println!("{}", "👋 Graceful shutdown complete.".green());
+            false
+        }
+        "/undo" => {
+            println!("{} Rollback", "⏪".yellow());
+            let _ = state.overlay.rollback();
+            true
+        }
+        "/commit" => {
+            match state.overlay.commit() {
+                Ok(files) => {
+                    println!("{} Committed {} file(s):", "✅".green(), files.len());
+                    for f in &files {
+                        println!("   📄 {}", f);
+                    }
+                }
+                Err(e) => eprintln!("{} Commit Error: {}", "⚠️".red(), e),
+            }
+            true
+        }
+        "/files" => {
+            let files = state.overlay.list_files();
+            if files.is_empty() {
+                println!("📂 Overlay is empty.");
+            } else {
+                println!("📂 Overlay ({} file(s)):", files.len());
+                for f in &files {
+                    println!("   📄 {}", f);
+                }
+            }
+            true
+        }
+        _ => {
+            println!("{} Unknown command: {}", "⚠️".yellow(), input);
+            true
         }
     }
 }

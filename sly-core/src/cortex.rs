@@ -7,6 +7,55 @@ use crate::state::SlyConfig;
 use crate::error::{Result, SlyError};
 use std::process::Command;
 
+/// Barebones JSON escaping for strings
+fn escape_json(s: &str) -> String {
+    s.chars()
+        .flat_map(|c| match c {
+            '"' => vec!['\\', '"'],
+            '\\' => vec!['\\', '\\'],
+            '\n' => vec!['\\', 'n'],
+            '\r' => vec!['\\', 'r'],
+            '\t' => vec!['\\', 't'],
+            c if c.is_control() => format!("\\u{:04x}", c as u32).chars().collect(),
+            c => vec![c],
+        })
+        .collect()
+}
+
+// --- Data Structures for API Requests ---
+
+struct OpenAIMessage<'a> {
+    role: &'a str,
+    content: &'a str,
+}
+
+struct OpenAIRequest<'a> {
+    model: &'a str,
+    messages: Vec<OpenAIMessage<'a>>,
+}
+
+impl<'a> OpenAIRequest<'a> {
+    fn to_json(&self) -> String {
+        let msgs: Vec<String> = self.messages.iter()
+            .map(|m| format!(r#"{{"role": "{}", "content": "{}"}}"#, m.role, escape_json(m.content)))
+            .collect();
+        format!(r#"{{"model": "{}", "messages": [{}]}}"#, self.model, msgs.join(", "))
+    }
+}
+
+struct GeminiRequest<'a> {
+    system: &'a str,
+    user: &'a str,
+}
+
+impl<'a> GeminiRequest<'a> {
+    fn to_json(&self) -> String {
+        let sys_json = format!(r#"{{"parts": [{{"text": "{}"}}]}}"#, escape_json(self.system));
+        let user_json = format!(r#"{{"parts": [{{"text": "{}"}}]}}"#, escape_json(self.user));
+        format!(r#"{{"systemInstruction": {}, "contents": [{}]}}"#, sys_json, user_json)
+    }
+}
+
 /// The default system prompt that teaches the LLM the action schema.
 const AGENT_SYSTEM_PROMPT: &str = r#"You are Sly, an autonomous coding agent. You MUST respond using JSON inside ```json code blocks.
 
@@ -74,13 +123,16 @@ impl Cortex {
         let sys = AGENT_SYSTEM_PROMPT;
 
         let (url, data, auth_header) = if let Ok(openai_url) = std::env::var("SLY_OPENAI_URL") {
-            let data = format!(
-                r#"{{"model": "{}", "messages": [{{"role": "system", "content": {:?}}}, {{"role": "user", "content": {:?}}}]}}"#,
-                self.config.primary_model, sys, prompt
-            );
+            let req = OpenAIRequest {
+                model: &self.config.primary_model,
+                messages: vec![
+                    OpenAIMessage { role: "system", content: sys },
+                    OpenAIMessage { role: "user", content: &prompt },
+                ],
+            };
             let auth = std::env::var("OPENAI_API_KEY").unwrap_or_default();
             let auth_header = format!("Authorization: Bearer {}", auth);
-            (openai_url, data, auth_header)
+            (openai_url, req.to_json(), auth_header)
         } else {
             let api_key = std::env::var("GEMINI_API_KEY")
                 .map_err(|_| SlyError::Config("GEMINI_API_KEY (or SLY_OPENAI_URL) not set".into()))?;
@@ -88,11 +140,8 @@ impl Cortex {
                 "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
                 self.config.primary_model, api_key
             );
-            let data = format!(
-                r#"{{"systemInstruction": {{"parts": [{{"text": {:?}}}]}}, "contents": [{{"parts":[{{"text": {:?}}}]}}]}}"#,
-                sys, prompt
-            );
-            (url, data, String::new())
+            let req = GeminiRequest { system: sys, user: &prompt };
+            (url, req.to_json(), String::new())
         };
 
         let mut cmd = Command::new("curl");
