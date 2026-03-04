@@ -95,17 +95,16 @@ fn run_reasoning_cycle(user_input: String, state: &mut GlobalState) -> Result<()
     let session_id = format!("sess_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
     
     let mut messages = state.memory.get_messages(&session_id)?;
-    messages.push(user_input);
+    messages.push(format!("USER: {}", user_input));
 
     for i in 0..state.config.max_autonomous_loops {
         println!("{} [Step {}] Thinking...", "🤔".magenta(), i + 1);
         
-        let last_msg = messages.last().cloned().unwrap_or_default();
-        let prompt = format!("History: {:?}\n\nTask: {}", messages, last_msg);
-        let response = state.cortex.generate_sync(prompt, crate::cortex::ThinkingLevel::Low, None)?;
+        // Pass the explicit array structure to cortex for KV Cache hit
+        let response = state.cortex.generate_sync(&messages, crate::cortex::ThinkingLevel::Low, None)?;
         
         println!("🤖 {}", response.green());
-        messages.push(response.clone());
+        messages.push(format!("MODEL: {}", response));
 
         let actions = parse_action(&response)?;
         let mut completed = false;
@@ -115,7 +114,7 @@ fn run_reasoning_cycle(user_input: String, state: &mut GlobalState) -> Result<()
                 AgentAction::WriteFile { path, content } => {
                      println!("{} Writing {}", "💾".blue(), path);
                      state.overlay.write_file(std::path::Path::new(&path), &content).ok();
-                     messages.push(format!("Observation: Wrote {}", path));
+                     messages.push(format!("USER: Observation: Wrote {}", path));
                 }
                 AgentAction::ExecShell { command } => {
                      println!("{} Shell: {}", "💻".blue(), command);
@@ -142,7 +141,7 @@ fn run_reasoning_cycle(user_input: String, state: &mut GlobalState) -> Result<()
                                              String::new()
                                          };
 
-                                         messages.push(format!("Observation:\n{}\nStdout: {}\nStderr: {}", primer, out, err));
+                                         messages.push(format!("USER: Observation:\n{}\nStdout: {}\nStderr: {}", primer, out, err));
                                          break;
                                      }
                                      Ok(None) => {
@@ -150,13 +149,13 @@ fn run_reasoning_cycle(user_input: String, state: &mut GlobalState) -> Result<()
                                              child.kill().ok();
                                              let out = std::fs::read_to_string(&temp_out).unwrap_or_default();
                                              let err = std::fs::read_to_string(&temp_err).unwrap_or_default();
-                                             messages.push(format!("Observation: Timeout ({}s). Killed.\nStdout: {}\nStderr: {}", timeout_secs, out, err));
+                                             messages.push(format!("USER: Observation: Timeout ({}s). Killed.\nStdout: {}\nStderr: {}", timeout_secs, out, err));
                                              break;
                                          }
                                          std::thread::sleep(std::time::Duration::from_millis(100));
                                      }
                                      Err(e) => {
-                                         messages.push(format!("Observation: Wait Error: {}", e));
+                                         messages.push(format!("USER: Observation: Wait Error: {}", e));
                                          break;
                                      }
                                  }
@@ -165,7 +164,7 @@ fn run_reasoning_cycle(user_input: String, state: &mut GlobalState) -> Result<()
                              std::fs::remove_file(&temp_err).ok();
                          }
                          Err(e) => {
-                             messages.push(format!("Observation: Spawn Error: {}", e));
+                             messages.push(format!("USER: Observation: Spawn Error: {}", e));
                          }
                      }
                 }
